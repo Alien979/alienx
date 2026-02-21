@@ -51,7 +51,7 @@ export class SigmaEngine {
       autoCompile: true,
       strictValidation: false,
       enableIndexing: false,
-      maxRules: 1000,
+      maxRules: 5000,
       maxConditionDepth: 10,
       enableRegex: true,
       maxRegexLength: 2000,
@@ -219,6 +219,7 @@ export class SigmaEngine {
    */
   clearRules(): void {
     this.rules.clear();
+    this.lazyRules.clear();
     this.stats.rulesLoaded = 0;
     this.stats.rulesCompiled = 0;
   }

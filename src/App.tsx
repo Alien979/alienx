@@ -133,11 +133,21 @@ function App() {
 
     // Load rules for selected platform with progress tracking
     const { autoLoadRules } = await import("./lib/sigma/utils/autoLoadRules");
-    await autoLoadRules(
+    const loadResult = await autoLoadRules(
       sigmaEngine,
       platform,
       (loaded, total) => setRuleLoadProgress({ loaded, total }),
       categories,
+    );
+
+    if (loadResult.errors.length > 0) {
+      console.warn(
+        `[SIGMA] ${loadResult.loaded} rules loaded, ${loadResult.failed} failed. Errors:`,
+        loadResult.errors.slice(0, 20),
+      );
+    }
+    console.log(
+      `[SIGMA] Successfully loaded ${loadResult.loaded} rules (${loadResult.failed} failed)`,
     );
 
     setRulesLoading(false);

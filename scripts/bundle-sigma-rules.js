@@ -8,13 +8,29 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { glob } from "glob";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const RULES_SOURCE = path.join(__dirname, "../src/sigma-master/rules/windows");
 const OUTPUT_DIR = path.join(__dirname, "../public/sigma-rules");
+
+/**
+ * Recursively find all .yml/.yaml files without using glob (avoids fd leaks)
+ */
+function findYamlFiles(dir) {
+  const results = [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...findYamlFiles(fullPath));
+    } else if (/\.ya?ml$/i.test(entry.name)) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
 
 async function bundleRules() {
   console.log("📦 Bundling SIGMA rules by category...\n");
@@ -24,58 +40,61 @@ async function bundleRules() {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
-  // Get all rule files
-  const ruleFiles = glob.sync("**/*.{yml,yaml}", {
-    cwd: RULES_SOURCE,
-    absolute: true,
-  });
+  // Get all rule files (using manual recursion instead of glob to avoid fd issues)
+  const ruleFiles = findYamlFiles(RULES_SOURCE);
 
   console.log(`Found ${ruleFiles.length} rule files\n`);
 
   if (ruleFiles.length === 0) {
-    // Write empty manifest and exit gracefully
-    const manifestFile = path.join(OUTPUT_DIR, "manifest.json");
-    fs.writeFileSync(manifestFile, JSON.stringify({}, null, 2), "utf8");
+    fs.writeFileSync(
+      path.join(OUTPUT_DIR, "manifest.json"),
+      JSON.stringify({}, null, 2),
+      "utf8",
+    );
     console.log("⚠️  No rule files found. Written empty manifest.");
     console.log("   Ensure src/sigma-master contains the SigmaHQ rules.\n");
     return;
   }
 
-  // Group by category (top-level directory)
-  const categories = {};
+  // Group file paths by category (top-level directory) — don't read content yet
+  const categoryPaths = {};
 
   for (const filePath of ruleFiles) {
     const relativePath = path.relative(RULES_SOURCE, filePath);
     const parts = relativePath.split(path.sep);
-    const category = parts[0]; // First directory is the category
+    const category = parts[0];
 
-    if (!categories[category]) {
-      categories[category] = [];
+    if (!categoryPaths[category]) {
+      categoryPaths[category] = [];
     }
-
-    try {
-      const content = fs.readFileSync(filePath, "utf8");
-      categories[category].push({
-        path: relativePath,
-        content: content,
-      });
-    } catch (error) {
-      console.warn(`⚠️  Failed to read ${relativePath}: ${error.message}`);
-    }
+    categoryPaths[category].push({ filePath, relativePath });
   }
 
-  // Write one JSON file per category
+  // Process one category at a time: read files → write JSON → free memory
   let totalSize = 0;
+  let totalRules = 0;
   const manifest = {};
 
-  for (const [category, rules] of Object.entries(categories)) {
+  for (const [category, files] of Object.entries(categoryPaths)) {
+    const rules = [];
+
+    for (const { filePath, relativePath } of files) {
+      try {
+        const content = fs.readFileSync(filePath, "utf8");
+        rules.push({ path: relativePath, content });
+      } catch (error) {
+        console.warn(`⚠️  Failed to read ${relativePath}: ${error.message}`);
+      }
+    }
+
+    // Write category JSON
     const outputFile = path.join(OUTPUT_DIR, `${category}.json`);
     const data = JSON.stringify(rules);
-
-    fs.writeFileSync(outputFile, data);
+    fs.writeFileSync(outputFile, data, "utf8");
 
     const sizeKB = (data.length / 1024).toFixed(2);
     totalSize += data.length;
+    totalRules += rules.length;
     manifest[category] = {
       file: `${category}.json`,
       ruleCount: rules.length,
@@ -89,11 +108,11 @@ async function bundleRules() {
 
   // Write manifest
   const manifestFile = path.join(OUTPUT_DIR, "manifest.json");
-  fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
+  fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2), "utf8");
 
   console.log(`\n📋 Manifest: manifest.json`);
   console.log(
-    `\n📊 Total: ${Object.keys(categories).length} categories, ${ruleFiles.length} rules, ${(totalSize / 1024 / 1024).toFixed(2)} MB`,
+    `\n📊 Total: ${Object.keys(categoryPaths).length} categories, ${totalRules} rules, ${(totalSize / 1024 / 1024).toFixed(2)} MB`,
   );
   console.log(`✅ Done! Files written to public/sigma-rules/\n`);
 }
