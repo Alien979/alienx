@@ -43,7 +43,8 @@ export default function AnalysisSelector({
   // Global search state
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [selectedSearchEvent, setSelectedSearchEvent] = useState<LogEntry | null>(null);
+  const [selectedSearchEvent, setSelectedSearchEvent] =
+    useState<LogEntry | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const searchResults = useMemo(() => {
@@ -53,28 +54,47 @@ export default function AnalysisSelector({
     for (const entry of data.entries) {
       if (results.length >= 50) break;
       // Search rawLine, message, eventData values, source, computer, eventId
-      if (entry.rawLine?.toLowerCase().includes(q)) { results.push(entry); continue; }
-      if (entry.message?.toLowerCase().includes(q)) { results.push(entry); continue; }
-      if (entry.computer?.toLowerCase().includes(q)) { results.push(entry); continue; }
-      if (entry.source?.toLowerCase().includes(q)) { results.push(entry); continue; }
-      if (String(entry.eventId || '').includes(q)) { results.push(entry); continue; }
+      if (entry.rawLine?.toLowerCase().includes(q)) {
+        results.push(entry);
+        continue;
+      }
+      if (entry.message?.toLowerCase().includes(q)) {
+        results.push(entry);
+        continue;
+      }
+      if (entry.computer?.toLowerCase().includes(q)) {
+        results.push(entry);
+        continue;
+      }
+      if (entry.source?.toLowerCase().includes(q)) {
+        results.push(entry);
+        continue;
+      }
+      if (String(entry.eventId || "").includes(q)) {
+        results.push(entry);
+        continue;
+      }
       if (entry.eventData) {
         const vals = Object.values(entry.eventData);
-        if (vals.some(v => v?.toLowerCase().includes(q))) { results.push(entry); continue; }
+        if (vals.some((v) => v?.toLowerCase().includes(q))) {
+          results.push(entry);
+          continue;
+        }
       }
     }
     return results;
   }, [searchQuery, data.entries]);
 
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      setSearchQuery('');
+    if (e.key === "Escape") {
+      setSearchQuery("");
       setSearchOpen(false);
     }
   }, []);
 
   const triage = useMemo(
-    () => (sigmaMatches.size > 0 ? computeTriageScore(data, sigmaMatches) : null),
+    () =>
+      sigmaMatches.size > 0 ? computeTriageScore(data, sigmaMatches) : null,
     [data, sigmaMatches],
   );
 
@@ -153,71 +173,158 @@ export default function AnalysisSelector({
       </div>
 
       {/* Global Event Search Bar */}
-      <div style={{ position: 'relative', margin: '1rem 0' }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: 'var(--card-bg, rgba(255,255,255,0.04))',
-          border: '1px solid rgba(0,240,255,0.15)',
-          borderRadius: 8, padding: '8px 14px',
-        }}>
-          <span style={{ fontSize: '1.1rem', opacity: 0.6 }}>🔍</span>
+      <div style={{ position: "relative", margin: "1rem 0" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: "var(--card-bg, rgba(255,255,255,0.04))",
+            border: "1px solid rgba(0,240,255,0.15)",
+            borderRadius: 8,
+            padding: "8px 14px",
+          }}
+        >
+          <span style={{ fontSize: "1.1rem", opacity: 0.6 }}>🔍</span>
           <input
             ref={searchInputRef}
             type="text"
             placeholder="Search all events — process names, IPs, commands, registry keys…"
             value={searchQuery}
-            onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true); }}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setSearchOpen(true);
+            }}
             onFocus={() => setSearchOpen(true)}
             onKeyDown={handleSearchKeyDown}
             style={{
-              flex: 1, background: 'transparent', border: 'none', outline: 'none',
-              color: 'var(--text-primary, #e4e4e7)', fontSize: '0.92rem',
-              fontFamily: 'inherit',
+              flex: 1,
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              color: "var(--text-primary, #e4e4e7)",
+              fontSize: "0.92rem",
+              fontFamily: "inherit",
             }}
           />
           {searchQuery && (
             <button
-              onClick={() => { setSearchQuery(''); setSearchOpen(false); }}
-              style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '1rem' }}
-            >✕</button>
+              onClick={() => {
+                setSearchQuery("");
+                setSearchOpen(false);
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#888",
+                cursor: "pointer",
+                fontSize: "1rem",
+              }}
+            >
+              ✕
+            </button>
           )}
         </div>
         {searchOpen && searchQuery.trim().length >= 2 && (
-          <div style={{
-            position: 'absolute', top: '100%', left: 0, right: 0,
-            zIndex: 100, maxHeight: 360, overflowY: 'auto',
-            background: 'var(--bg-secondary, #1a1a2e)',
-            border: '1px solid rgba(0,240,255,0.2)',
-            borderTop: 'none', borderRadius: '0 0 8px 8px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-          }}>
+          <div
+            style={{
+              position: "absolute",
+              top: "100%",
+              left: 0,
+              right: 0,
+              zIndex: 100,
+              maxHeight: 360,
+              overflowY: "auto",
+              background: "var(--bg-secondary, #1a1a2e)",
+              border: "1px solid rgba(0,240,255,0.2)",
+              borderTop: "none",
+              borderRadius: "0 0 8px 8px",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+            }}
+          >
             {searchResults.length === 0 ? (
-              <div style={{ padding: '12px 16px', color: '#888', fontSize: '0.85rem' }}>
+              <div
+                style={{
+                  padding: "12px 16px",
+                  color: "#888",
+                  fontSize: "0.85rem",
+                }}
+              >
                 No results for "{searchQuery}"
               </div>
             ) : (
               <>
-                <div style={{ padding: '6px 14px', fontSize: '0.75rem', color: '#888', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                  {searchResults.length >= 50 ? '50+ matches' : `${searchResults.length} match${searchResults.length !== 1 ? 'es' : ''}`}
+                <div
+                  style={{
+                    padding: "6px 14px",
+                    fontSize: "0.75rem",
+                    color: "#888",
+                    borderBottom: "1px solid rgba(255,255,255,0.06)",
+                  }}
+                >
+                  {searchResults.length >= 50
+                    ? "50+ matches"
+                    : `${searchResults.length} match${searchResults.length !== 1 ? "es" : ""}`}
                 </div>
                 {searchResults.map((entry, i) => (
                   <div
                     key={i}
-                    onClick={() => { setSelectedSearchEvent(entry); setSearchOpen(false); }}
-                    style={{
-                      padding: '8px 14px', cursor: 'pointer', fontSize: '0.82rem',
-                      borderBottom: '1px solid rgba(255,255,255,0.04)',
-                      display: 'flex', gap: 10, alignItems: 'center',
+                    onClick={() => {
+                      setSelectedSearchEvent(entry);
+                      setSearchOpen(false);
                     }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(0,240,255,0.06)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    style={{
+                      padding: "8px 14px",
+                      cursor: "pointer",
+                      fontSize: "0.82rem",
+                      borderBottom: "1px solid rgba(255,255,255,0.04)",
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "center",
+                    }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.background =
+                        "rgba(0,240,255,0.06)")
+                    }
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.background = "transparent")
+                    }
                   >
-                    <span style={{ color: '#888', minWidth: 70, fontSize: '0.75rem' }}>
-                      {entry.timestamp instanceof Date ? entry.timestamp.toLocaleTimeString() : String(entry.timestamp)}
+                    <span
+                      style={{
+                        color: "#888",
+                        minWidth: 70,
+                        fontSize: "0.75rem",
+                      }}
+                    >
+                      {entry.timestamp instanceof Date
+                        ? entry.timestamp.toLocaleTimeString()
+                        : String(entry.timestamp)}
                     </span>
-                    {entry.eventId && <span style={{ color: '#00c8ff', fontFamily: 'monospace', minWidth: 45, fontSize: '0.75rem' }}>{entry.eventId}</span>}
-                    <span style={{ color: '#ccc', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {entry.message || entry.rawLine?.slice(0, 120) || 'No message'}
+                    {entry.eventId && (
+                      <span
+                        style={{
+                          color: "#00c8ff",
+                          fontFamily: "monospace",
+                          minWidth: 45,
+                          fontSize: "0.75rem",
+                        }}
+                      >
+                        {entry.eventId}
+                      </span>
+                    )}
+                    <span
+                      style={{
+                        color: "#ccc",
+                        flex: 1,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {entry.message ||
+                        entry.rawLine?.slice(0, 120) ||
+                        "No message"}
                     </span>
                   </div>
                 ))}
@@ -229,35 +336,85 @@ export default function AnalysisSelector({
 
       {/* Automated Triage Score */}
       {triage && (
-        <div style={{
-          margin: '1rem 0', padding: '1rem 1.25rem',
-          background: 'rgba(0,0,0,0.2)', borderRadius: 10,
-          border: `1px solid ${triage.color}44`,
-          display: 'flex', alignItems: 'flex-start', gap: '1.25rem',
-        }}>
-          <div style={{
-            minWidth: 72, height: 72, borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column',
-            border: `3px solid ${triage.color}`,
-            background: `${triage.color}18`,
-          }}>
-            <span style={{ fontSize: '1.4rem', fontWeight: 700, color: triage.color, lineHeight: 1 }}>
+        <div
+          style={{
+            margin: "1rem 0",
+            padding: "1rem 1.25rem",
+            background: "rgba(0,0,0,0.2)",
+            borderRadius: 10,
+            border: `1px solid ${triage.color}44`,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "1.25rem",
+          }}
+        >
+          <div
+            style={{
+              minWidth: 72,
+              height: 72,
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexDirection: "column",
+              border: `3px solid ${triage.color}`,
+              background: `${triage.color}18`,
+            }}
+          >
+            <span
+              style={{
+                fontSize: "1.4rem",
+                fontWeight: 700,
+                color: triage.color,
+                lineHeight: 1,
+              }}
+            >
               {triage.score}
             </span>
-            <span style={{ fontSize: '0.55rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: 1 }}>
+            <span
+              style={{
+                fontSize: "0.55rem",
+                color: "#aaa",
+                textTransform: "uppercase",
+                letterSpacing: 1,
+              }}
+            >
               /100
             </span>
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontWeight: 600, color: triage.color, fontSize: '0.95rem' }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 6,
+              }}
+            >
+              <span
+                style={{
+                  fontWeight: 600,
+                  color: triage.color,
+                  fontSize: "0.95rem",
+                }}
+              >
                 Triage: {triage.label}
               </span>
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', fontSize: '0.78rem' }}>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "6px 16px",
+                fontSize: "0.78rem",
+              }}
+            >
               {triage.factors.map((f) => (
-                <span key={f.name} style={{ color: '#bbb' }} title={f.detail}>
-                  <span style={{ color: '#fff', fontWeight: 600 }}>+{f.points}</span>{' '}{f.name}
+                <span key={f.name} style={{ color: "#bbb" }} title={f.detail}>
+                  <span style={{ color: "#fff", fontWeight: 600 }}>
+                    +{f.points}
+                  </span>{" "}
+                  {f.name}
                 </span>
               ))}
             </div>
@@ -447,7 +604,6 @@ export default function AnalysisSelector({
           </div>
           <div className="card-arrow">→</div>
         </div>
-
       </div>
 
       <div className="privacy-note">

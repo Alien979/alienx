@@ -63,7 +63,9 @@ function App() {
   const [showSessionManager, setShowSessionManager] = useState(false);
   const [showBookmarkPanel, setShowBookmarkPanel] = useState(false);
   const [pivotEvent, setPivotEvent] = useState<LogEntry | null>(null);
-  const [bookmarkCount, setBookmarkCount] = useState(() => getBookmarks().length);
+  const [bookmarkCount, setBookmarkCount] = useState(
+    () => getBookmarks().length,
+  );
 
   // ── Theme toggle (dark / light) ─────────────────────────────
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -511,18 +513,31 @@ function App() {
           className="theme-toggle-btn"
           onClick={() => setShowBookmarkPanel(true)}
           title="View bookmarked events (Ctrl+Shift+B)"
-          style={{ left: 72, position: 'fixed' }}
+          style={{ left: 72, position: "fixed" }}
         >
           🔖
           {bookmarkCount > 0 && (
-            <span style={{
-              position: 'absolute', top: -4, right: -4,
-              background: '#ff4444', color: '#fff',
-              borderRadius: '50%', minWidth: 18, height: 18,
-              fontSize: '0.65rem', fontWeight: 700,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              padding: '0 4px', lineHeight: 1,
-            }}>{bookmarkCount > 99 ? '99+' : bookmarkCount}</span>
+            <span
+              style={{
+                position: "absolute",
+                top: -4,
+                right: -4,
+                background: "#ff4444",
+                color: "#fff",
+                borderRadius: "50%",
+                minWidth: 18,
+                height: 18,
+                fontSize: "0.65rem",
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "0 4px",
+                lineHeight: 1,
+              }}
+            >
+              {bookmarkCount > 99 ? "99+" : bookmarkCount}
+            </span>
           )}
         </button>
       )}
