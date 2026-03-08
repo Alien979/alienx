@@ -13,6 +13,7 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  ReferenceLine,
 } from 'recharts';
 import { ParsedData, ChartDataPoint, StatusCodeData, IPData } from '../types';
 import './Dashboards.css';
@@ -99,6 +100,43 @@ export default function Dashboards({ data, onBack, onIPClick }: DashboardsProps)
       .slice(0, 10);
   }, [data]);
 
+  // Event Frequency Anomaly Detection
+  const anomalyData = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    data.entries.forEach((entry) => {
+      if (!entry.timestamp || isNaN(entry.timestamp.getTime())) return;
+      const hourKey = entry.timestamp.toISOString().substring(0, 13) + ':00:00.000Z';
+      counts.set(hourKey, (counts.get(hourKey) || 0) + 1);
+    });
+
+    const sorted = Array.from(counts.entries()).sort(([a], [b]) => a.localeCompare(b));
+    
+    if (sorted.length < 3) return { data: [], mean: 0, threshold: 0, anomalies: 0 };
+
+    const values = sorted.map(([, c]) => c);
+    const mean = values.reduce((s, v) => s + v, 0) / values.length;
+    const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
+    const stdDev = Math.sqrt(variance);
+    const threshold = mean + 2 * stdDev;
+
+    let anomalies = 0;
+    const chartData = sorted.map(([isoTime, count]) => {
+      const date = new Date(isoTime);
+      const time = date.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const isAnomaly = count > threshold;
+      if (isAnomaly) anomalies++;
+      return { time, count, isAnomaly, threshold: Math.round(threshold) };
+    });
+
+    return { data: chartData, mean: Math.round(mean), threshold: Math.round(threshold), anomalies };
+  }, [data]);
+
   return (
     <div className="dashboards-page">
       <div className="dashboards-header">
@@ -176,6 +214,55 @@ export default function Dashboards({ data, onBack, onIPClick }: DashboardsProps)
           </ResponsiveContainer>
           {onIPClick && <p className="hint">Click on a bar to filter logs by IP</p>}
         </div>
+
+        {/* Event Frequency Anomaly Detection */}
+        {anomalyData.data.length > 0 && (
+          <div className="chart-card" style={{ gridColumn: '1 / -1' }}>
+            <h3>
+              ⚡ Event Frequency Anomaly Detection
+              {anomalyData.anomalies > 0 && (
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#ef4444', marginLeft: '0.75rem' }}>
+                  {anomalyData.anomalies} anomal{anomalyData.anomalies === 1 ? 'y' : 'ies'} detected
+                </span>
+              )}
+            </h3>
+            <p style={{ fontSize: '0.8rem', color: '#888', margin: '0 0 0.75rem' }}>
+              Hourly event counts with ±2σ threshold (mean: {anomalyData.mean}, threshold: {anomalyData.threshold}).
+              Red bars indicate spikes exceeding 2 standard deviations above the mean.
+            </p>
+            <ResponsiveContainer width="100%" height={350}>
+              <BarChart data={anomalyData.data}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                <XAxis dataKey="time" stroke="#999" angle={-45} textAnchor="end" height={80} fontSize={11} />
+                <YAxis stroke="#999" />
+                <Tooltip
+                  contentStyle={{ background: '#1a1a2e', border: '1px solid #444' }}
+                  formatter={(value: number, name: string) => {
+                    if (name === 'count') return [value, 'Events'];
+                    return [value, name];
+                  }}
+                  labelFormatter={(label) => `Time: ${label}`}
+                />
+                <ReferenceLine y={anomalyData.threshold} stroke="#ef4444" strokeDasharray="6 3" label={{ value: `2σ threshold (${anomalyData.threshold})`, fill: '#ef4444', fontSize: 11, position: 'insideTopRight' }} />
+                <ReferenceLine y={anomalyData.mean} stroke="#60a5fa" strokeDasharray="3 3" label={{ value: `Mean (${anomalyData.mean})`, fill: '#60a5fa', fontSize: 11, position: 'insideBottomRight' }} />
+                <Bar dataKey="count" name="Events">
+                  {anomalyData.data.map((entry, index) => (
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={entry.isAnomaly ? '#ef4444' : '#60a5fa'}
+                      fillOpacity={entry.isAnomaly ? 1 : 0.7}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            {anomalyData.anomalies === 0 && (
+              <p style={{ textAlign: 'center', color: '#4ade80', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>
+                ✓ No significant anomalies detected — event frequency is within normal range.
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

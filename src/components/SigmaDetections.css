@@ -363,7 +363,7 @@
   font-size: 0.875rem;
   color: var(--text-dim);
   margin-bottom: 0.5rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .event-info {
@@ -404,7 +404,7 @@
   padding: 0.5rem;
   background: var(--bg-card);
   border-radius: 4px;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   font-size: 0.75rem;
   overflow: visible;
 }
@@ -493,7 +493,7 @@
 .field-selection-tooltip pre {
   margin: 0;
   padding: 0;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   font-size: 0.75rem;
   color: var(--text-secondary);
   line-height: 1.5;
@@ -501,6 +501,255 @@
 
 /* Removed tooltip arrow since dynamic positioning makes it unreliable */
 /* The tooltip now uses viewport-aware JavaScript positioning */
+
+/* ===== Why Did This Match? Panel ===== */
+.why-matched-panel {
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  background: rgba(96, 165, 250, 0.06);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: 8px;
+}
+
+.why-matched-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.why-matched-icon {
+  font-size: 1rem;
+}
+
+.why-matched-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--accent-blue);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.why-rule-description {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  border-left: 2px solid var(--accent-blue);
+  line-height: 1.5;
+}
+
+.why-matched-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.why-matched-group {
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-card);
+  border-radius: 6px;
+  border-left: 3px solid var(--accent-blue);
+}
+
+.why-group-filter {
+  border-left-color: #f97316;
+}
+
+.why-group-matched {
+  background: rgba(34, 197, 94, 0.04);
+}
+
+.why-group-unmatched {
+  background: rgba(255, 255, 255, 0.02);
+  opacity: 0.7;
+}
+
+.why-matched-sel-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.why-sel-status {
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.why-sel-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.why-sel-select {
+  background: rgba(96, 165, 250, 0.15);
+  color: #60a5fa;
+}
+
+.why-sel-filter {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+}
+
+.why-sel-summary {
+  font-size: 0.7rem;
+  color: #888;
+  font-style: italic;
+}
+
+.why-matched-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.2rem 0;
+  font-size: 0.75rem;
+  font-family: "Fira Code", "Cascadia Code", "Courier New", monospace;
+  flex-wrap: wrap;
+  line-height: 1.5;
+}
+
+.why-row-hit {
+  background: rgba(34, 197, 94, 0.05);
+  border-radius: 3px;
+  padding: 0.2rem 0.4rem;
+}
+
+.why-row-miss {
+  opacity: 0.55;
+  padding: 0.2rem 0.4rem;
+}
+
+.why-row-indicator {
+  font-size: 0.6rem;
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+}
+
+.why-row-hit .why-row-indicator {
+  color: #22c55e;
+}
+
+.why-row-miss .why-row-indicator {
+  color: #555;
+}
+
+.why-field-name {
+  color: #a78bfa;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.why-arrow {
+  color: #666;
+  flex-shrink: 0;
+}
+
+.why-actual-value {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 400px;
+}
+
+.why-row-hit .why-actual-value {
+  color: #86efac;
+}
+
+.why-matched-because {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: 0.25rem;
+}
+
+.why-modifier {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.why-pattern {
+  color: #4ade80;
+  font-weight: 500;
+}
+
+.why-condition-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  margin-top: 0.25rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.why-condition-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.why-condition-code {
+  font-family: "Fira Code", "Cascadia Code", "Courier New", monospace;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+}
+
+/* Raw Fields Details (collapsible) */
+.raw-fields-details {
+  margin-top: 0.5rem;
+}
+
+.raw-fields-summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: 0.4rem 0;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.raw-fields-summary::-webkit-details-marker {
+  display: none;
+}
+
+.raw-fields-summary::before {
+  content: "▸";
+  font-size: 0.7rem;
+  transition: transform 0.15s;
+}
+
+.raw-fields-details[open] .raw-fields-summary::before {
+  transform: rotate(90deg);
+}
+
+.raw-fields-hint {
+  font-weight: normal;
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
 
 .field-value {
   color: var(--text-secondary);

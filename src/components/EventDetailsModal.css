@@ -76,7 +76,7 @@
 .event-modal-subtitle {
   font-size: 0.875rem;
   color: var(--text-muted);
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .event-modal-close {
@@ -131,7 +131,7 @@
   padding: 1.5rem;
   margin: 0;
   overflow-x: auto;
-  font-family: 'Courier New', Consolas, Monaco, monospace;
+  font-family: "Courier New", Consolas, Monaco, monospace;
   font-size: 0.875rem;
   line-height: 1.6;
   color: var(--text-secondary);
@@ -242,4 +242,63 @@
     font-size: 0.8rem;
     padding: 1rem;
   }
+}
+
+/* ── Per-field table view ─────────────────────────────────── */
+.event-fields-table {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.event-field-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.35fr) 1fr 32px;
+  align-items: start;
+  background: var(--bg-tertiary);
+  gap: 0;
+}
+
+.event-field-row:hover {
+  background: var(--bg-hover);
+}
+
+.event-field-key {
+  padding: 6px 10px;
+  color: var(--accent-blue);
+  font-family: "Courier New", monospace;
+  font-size: 0.8rem;
+  font-weight: 600;
+  word-break: break-all;
+  border-right: 1px solid var(--border-secondary);
+}
+
+.event-field-value {
+  padding: 6px 10px;
+  color: var(--text-secondary);
+  font-family: "Courier New", monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+  user-select: text;
+}
+
+.event-field-copy {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 6px 4px;
+  transition: color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.event-field-copy:hover {
+  color: var(--accent-blue);
 }

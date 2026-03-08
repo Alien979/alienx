@@ -1,9 +1,25 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { LogEntry, ParsedData } from "../types";
 import { SigmaRuleMatch } from "../lib/sigma/types";
-import { correlateEvents, CorrelatedChain } from "../lib/correlationEngine";
+import {
+  correlateEvents,
+  CorrelatedChain,
+  EVENT_TYPE_DESCRIPTIONS,
+} from "../lib/correlationEngine";
 import ExportReport from "./ExportReport";
 import "./EventCorrelation.css";
+
+/** Shared helper: read a named field from a log entry's eventData or fall back to raw XML regex. */
+function getEventField(event: LogEntry, fieldName: string): string | null {
+  if (event.eventData && event.eventData[fieldName]) {
+    return event.eventData[fieldName];
+  }
+  if (!event.rawLine) return null;
+  const match = event.rawLine.match(
+    new RegExp(`<Data Name="${fieldName}">([^<]*)</Data>`, "i"),
+  );
+  return match ? match[1] : null;
+}
 
 interface EventCorrelationProps {
   entries: LogEntry[];
@@ -12,6 +28,7 @@ interface EventCorrelationProps {
   data: ParsedData;
   filename: string;
   platform: string | null;
+  onPivotToEvent?: (entry: LogEntry) => void;
 }
 
 export default function EventCorrelation({
@@ -21,13 +38,15 @@ export default function EventCorrelation({
   data,
   filename,
   platform,
+  onPivotToEvent,
 }: EventCorrelationProps) {
   const [minEvents, setMinEvents] = useState(3);
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [showExportReport, setShowExportReport] = useState(false);
-  const [viewMode, setViewMode] = useState<"chains" | "story">("chains");
+  const [viewMode, setViewMode] = useState<"chains" | "story" | "graph">("chains");
   const [isCorrelating, setIsCorrelating] = useState(true);
   const [chains, setChains] = useState<CorrelatedChain[]>([]);
+  const [temporalWindow, setTemporalWindow] = useState(30); // seconds
   const [correlationProgress, setCorrelationProgress] = useState({
     current: 0,
     total: 5,
@@ -47,13 +66,14 @@ export default function EventCorrelation({
         (current, total) => {
           setCorrelationProgress({ current, total });
         },
+        { temporalWindowMs: temporalWindow * 1000 },
       );
       setChains(result);
       setIsCorrelating(false);
     };
 
     runCorrelation();
-  }, [entries, sigmaMatches]);
+  }, [entries, sigmaMatches, temporalWindow]);
 
   // Filter and sort chains
   const filteredChains = useMemo(() => {
@@ -175,6 +195,13 @@ export default function EventCorrelation({
             >
               Chains
             </button>
+            <button
+              className={viewMode === "graph" ? "active" : ""}
+              onClick={() => setViewMode("graph")}
+              title="Force-directed relationship graph"
+            >
+              Graph
+            </button>
           </div>
           <button
             className="export-report-btn"
@@ -183,6 +210,29 @@ export default function EventCorrelation({
             Export Report
           </button>
         </div>
+      </div>
+
+      {/* Onboarding */}
+      <div
+        style={{
+          padding: "12px 16px",
+          marginBottom: 12,
+          borderRadius: 8,
+          background: "rgba(96,165,250,0.06)",
+          border: "1px solid rgba(96,165,250,0.15)",
+          fontSize: "0.85rem",
+          color: "#aaa",
+          lineHeight: 1.6,
+        }}
+      >
+        <strong style={{ color: "#60a5fa" }}>
+          How Event Correlation Works:
+        </strong>{" "}
+        This engine links related security events into attack chains by
+        analysing process parent–child relationships, network connections,
+        credential access, and temporal proximity (configurable window). Chains
+        are scored and ranked by severity based on SIGMA rule matches found
+        within each chain.
       </div>
 
       {/* SIGMA Note */}
@@ -250,6 +300,21 @@ export default function EventCorrelation({
             <option value="info">Info</option>
           </select>
         </div>
+        <div className="filter-group">
+          <label>Temporal Window:</label>
+          <input
+            type="range"
+            min={0}
+            max={120}
+            step={5}
+            value={temporalWindow}
+            onChange={(e) => setTemporalWindow(parseInt(e.target.value) || 0)}
+            style={{ width: 100 }}
+          />
+          <span style={{ fontSize: "0.8rem", color: "#aaa", marginLeft: 4 }}>
+            {temporalWindow === 0 ? "Off" : `${temporalWindow}s`}
+          </span>
+        </div>
         <div className="filter-result">
           Showing {filteredChains.length} of {chains.length} chains
         </div>
@@ -262,10 +327,16 @@ export default function EventCorrelation({
             chains={filteredChains}
             formatDuration={formatDuration}
           />
+        ) : viewMode === "graph" ? (
+          <CorrelationGraph
+            chains={filteredChains}
+            onPivotToEvent={onPivotToEvent}
+          />
         ) : (
           <ChainTimeline
             chains={filteredChains}
             formatDuration={formatDuration}
+            onPivotToEvent={onPivotToEvent}
           />
         )}
       </div>
@@ -284,10 +355,484 @@ export default function EventCorrelation({
   );
 }
 
+// ============================================================================
+// CORRELATION GRAPH — Clean hierarchical visualization
+// ============================================================================
+
+const EDGE_COLORS: Record<string, string> = {
+  process_spawn: "#60a5fa",
+  same_process: "#a78bfa",
+  network_connection: "#06b6d4",
+  file_operation: "#4ade80",
+  registry_operation: "#fbbf24",
+  temporal: "#555",
+};
+
+const SEVERITY_NODE_COLORS: Record<string, string> = {
+  critical: "#ef4444",
+  high: "#f97316",
+  medium: "#eab308",
+  low: "#22c55e",
+  info: "#94a3b8",
+};
+
+interface GraphNode {
+  id: number;
+  x: number;
+  y: number;
+  label: string;
+  hasSigma: boolean;
+  sigmaRules: string[]; // rule titles
+  sigmaDetails: Array<{ rule: string; fields: Array<{ field: string; value: string; modifier?: string }> }>;
+  chainIdx: number;
+  entry: LogEntry;
+  depth: number;
+}
+
+interface GraphEdge {
+  source: number;
+  target: number;
+  type: string;
+}
+
+interface CorrelationGraphProps {
+  chains: CorrelatedChain[];
+  onPivotToEvent?: (entry: LogEntry) => void;
+}
+
+function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [selectedChain, setSelectedChain] = useState<number>(0); // Default to first chain
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const isPanning = useRef(false);
+  const panStart = useRef({ x: 0, y: 0, px: 0, py: 0 });
+
+  // Build graph data from selected chain
+  const { nodes, edges } = useMemo(() => {
+    if (chains.length === 0) return { nodes: [], edges: [] };
+
+    const chain = chains[selectedChain] || chains[0];
+    const ns: GraphNode[] = [];
+    const es: GraphEdge[] = [];
+
+    // Build adjacency list for tree layout
+    const children = new Map<number, number[]>();
+    const hasParent = new Set<number>();
+    for (const rel of chain.relationships) {
+      if (rel.type === "process_spawn" || rel.type === "same_process" || rel.type === "file_operation") {
+        const c = children.get(rel.sourceIndex) || [];
+        c.push(rel.targetIndex);
+        children.set(rel.sourceIndex, c);
+        hasParent.add(rel.targetIndex);
+      }
+    }
+
+    // Find roots (nodes with no parent)
+    const roots: number[] = [];
+    for (let i = 0; i < chain.events.length; i++) {
+      if (!hasParent.has(i)) roots.push(i);
+    }
+    if (roots.length === 0 && chain.events.length > 0) roots.push(0);
+
+    // Assign depths via BFS
+    const depthMap = new Map<number, number>();
+    const queue: Array<{ idx: number; depth: number }> = roots.map(r => ({ idx: r, depth: 0 }));
+    const visited = new Set<number>();
+    while (queue.length > 0) {
+      const { idx, depth } = queue.shift()!;
+      if (visited.has(idx)) continue;
+      visited.add(idx);
+      depthMap.set(idx, depth);
+      for (const child of (children.get(idx) || [])) {
+        if (!visited.has(child)) queue.push({ idx: child, depth: depth + 1 });
+      }
+    }
+    // Add unvisited nodes
+    for (let i = 0; i < chain.events.length; i++) {
+      if (!depthMap.has(i)) depthMap.set(i, (depthMap.size > 0 ? Math.max(...depthMap.values()) + 1 : 0));
+    }
+
+    // Group nodes by depth for horizontal positioning
+    const depthGroups = new Map<number, number[]>();
+    for (const [idx, depth] of depthMap.entries()) {
+      const arr = depthGroups.get(depth) || [];
+      arr.push(idx);
+      depthGroups.set(depth, arr);
+    }
+
+    // Limit displayed nodes for very large chains
+    const MAX_NODES = 50;
+    const allIndices = Array.from(depthMap.keys()).sort((a, b) => (depthMap.get(a) || 0) - (depthMap.get(b) || 0));
+    const displayIndices = new Set(allIndices.slice(0, MAX_NODES));
+
+    // Compute positions — tree layout: depth downward, siblings side-by-side
+    const NODE_H_SPACING = 140;
+    const NODE_V_SPACING = 100;
+    const globalIdxMap = new Map<number, number>(); // chain localIdx → graph node idx
+
+    const sortedDepths = Array.from(depthGroups.keys()).sort((a, b) => a - b);
+    const maxWidth = Math.max(...Array.from(depthGroups.values()).map(g => g.filter(i => displayIndices.has(i)).length), 1);
+    const canvasW = Math.max(900, maxWidth * NODE_H_SPACING + 100);
+
+    for (const depth of sortedDepths) {
+      const group = (depthGroups.get(depth) || []).filter(i => displayIndices.has(i));
+      const totalW = (group.length - 1) * NODE_H_SPACING;
+      const startX = canvasW / 2 - totalW / 2;
+      const y = 60 + depth * NODE_V_SPACING;
+
+      group.forEach((eventIdx, posIdx) => {
+        const event = chain.events[eventIdx];
+        if (!event) return;
+
+        const procName = event.eventData?.Image?.split(/[\\\/]/).pop()
+          || event.eventData?.TargetFilename?.split(/[\\\/]/).pop()
+          || `Event ${event.eventId || "?"}`;
+
+        // Check SIGMA matches for this event
+        const sigmaRules: string[] = [];
+        const sigmaDetails: GraphNode["sigmaDetails"] = [];
+        for (const sm of chain.sigmaMatches) {
+          const evtMatch = sm.event === event || (sm.event?.rawLine && event.rawLine && sm.event.rawLine === event.rawLine);
+          if (evtMatch) {
+            sigmaRules.push(sm.rule.title);
+            const fields: Array<{ field: string; value: string; modifier?: string }> = [];
+            if (sm.selectionMatches) {
+              for (const selM of sm.selectionMatches) {
+                if (!selM.matched) continue;
+                for (const fm of selM.fieldMatches) {
+                  if (fm.matched) {
+                    fields.push({
+                      field: fm.field,
+                      value: fm.value !== undefined && fm.value !== null ? String(fm.value) : "N/A",
+                      modifier: fm.modifier ? fm.modifier : undefined,
+                    });
+                  }
+                }
+              }
+            }
+            sigmaDetails.push({ rule: sm.rule.title, fields });
+          }
+        }
+
+        const gIdx = ns.length;
+        globalIdxMap.set(eventIdx, gIdx);
+        ns.push({
+          id: gIdx,
+          x: startX + posIdx * NODE_H_SPACING,
+          y,
+          label: procName,
+          hasSigma: sigmaRules.length > 0,
+          sigmaRules,
+          sigmaDetails,
+          chainIdx: selectedChain,
+          entry: event,
+          depth,
+        });
+      });
+    }
+
+    // Add edges
+    for (const rel of chain.relationships) {
+      const src = globalIdxMap.get(rel.sourceIndex);
+      const tgt = globalIdxMap.get(rel.targetIndex);
+      if (src !== undefined && tgt !== undefined) {
+        es.push({ source: src, target: tgt, type: rel.type });
+      }
+    }
+
+    return { nodes: ns, edges: es };
+  }, [chains, selectedChain]);
+
+  // Compute SVG dimensions
+  const svgWidth = useMemo(() => {
+    if (nodes.length === 0) return 900;
+    return Math.max(900, Math.max(...nodes.map(n => n.x)) + 100);
+  }, [nodes]);
+  const svgHeight = useMemo(() => {
+    if (nodes.length === 0) return 500;
+    return Math.max(500, Math.max(...nodes.map(n => n.y)) + 120);
+  }, [nodes]);
+
+  // Reset zoom/pan when chain changes
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setSelectedNode(null);
+    setHoveredNode(null);
+  }, [selectedChain]);
+
+  // Pan handlers
+  const handleSvgMouseDown = useCallback((e: React.MouseEvent) => {
+    if ((e.target as Element).closest("g[data-node]")) return;
+    isPanning.current = true;
+    panStart.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
+  }, [pan]);
+
+  const handleSvgMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isPanning.current) return;
+    setPan({
+      x: panStart.current.px + (e.clientX - panStart.current.x),
+      y: panStart.current.py + (e.clientY - panStart.current.y),
+    });
+  }, []);
+
+  const handleSvgMouseUp = useCallback(() => {
+    isPanning.current = false;
+  }, []);
+
+  // Zoom handler
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    setZoom(z => Math.max(0.3, Math.min(3, z - e.deltaY * 0.001)));
+  }, []);
+
+  if (chains.length === 0) {
+    return <div className="story-empty">No chains match the current filters.</div>;
+  }
+
+  const currentChain = chains[selectedChain] || chains[0];
+
+  return (
+    <div className="correlation-graph-container">
+      {/* Chain selector */}
+      <div className="graph-chain-selector">
+        {chains.map((chain, i) => (
+          <button
+            key={chain.id}
+            className={selectedChain === i ? "active" : ""}
+            onClick={() => setSelectedChain(i)}
+            style={{ borderLeftColor: SEVERITY_NODE_COLORS[chain.severity] || "#888" }}
+          >
+            Chain {i + 1}{" "}
+            <span style={{ fontSize: "0.7rem", color: SEVERITY_NODE_COLORS[chain.severity] || "#888" }}>
+              {chain.severity}
+            </span>
+            {chain.sigmaMatches.length > 0 && (
+              <span style={{ color: "#ef4444", marginLeft: 4, fontSize: "0.65rem" }}>
+                ⚠ {chain.sigmaMatches.length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Chain info bar */}
+      <div className="graph-info-bar">
+        <span>{currentChain.events.length} events</span>
+        <span>{currentChain.relationships.length} relationships</span>
+        <span>{currentChain.sigmaMatches.length} SIGMA detections</span>
+        <span className="graph-zoom-controls">
+          <button onClick={() => setZoom(z => Math.min(3, z + 0.2))} title="Zoom in">+</button>
+          <span style={{ fontSize: "0.7rem", minWidth: 40, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
+          <button onClick={() => setZoom(z => Math.max(0.3, z - 0.2))} title="Zoom out">−</button>
+          <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} title="Reset view" style={{ marginLeft: 4 }}>⟲</button>
+        </span>
+      </div>
+
+      {/* Legend */}
+      <div className="graph-legend">
+        {Object.entries(EDGE_COLORS).map(([type, color]) => (
+          <span key={type} className="legend-item">
+            <span className="legend-line" style={{ background: color }} />
+            {type.replace(/_/g, " ")}
+          </span>
+        ))}
+        <span className="legend-item">
+          <span className="legend-dot" style={{ background: "#ef4444", boxShadow: "0 0 6px #ef4444" }} />
+          SIGMA match
+        </span>
+      </div>
+
+      {/* SVG canvas */}
+      <div
+        ref={containerRef}
+        className="graph-canvas-wrapper"
+        onWheel={handleWheel}
+      >
+        <svg
+          ref={svgRef}
+          width={svgWidth}
+          height={svgHeight}
+          className="correlation-graph-svg"
+          style={{ transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`, transformOrigin: "0 0" }}
+          onMouseDown={handleSvgMouseDown}
+          onMouseMove={handleSvgMouseMove}
+          onMouseUp={handleSvgMouseUp}
+          onMouseLeave={handleSvgMouseUp}
+        >
+          {/* Edge arrows definition */}
+          <defs>
+            {Object.entries(EDGE_COLORS).map(([type, color]) => (
+              <marker key={type} id={`arrow-${type}`} viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto">
+                <path d="M0,0 L10,3 L0,6 Z" fill={color} />
+              </marker>
+            ))}
+          </defs>
+
+          {/* Edges */}
+          {edges.map((edge, i) => {
+            const src = nodes[edge.source];
+            const tgt = nodes[edge.target];
+            if (!src || !tgt) return null;
+            // Shorten line to not overlap node circles
+            const dx = tgt.x - src.x;
+            const dy = tgt.y - src.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const srcR = src.hasSigma ? 14 : 10;
+            const tgtR = tgt.hasSigma ? 14 : 10;
+            return (
+              <line
+                key={`e-${i}`}
+                x1={src.x + (dx / dist) * srcR}
+                y1={src.y + (dy / dist) * srcR}
+                x2={tgt.x - (dx / dist) * (tgtR + 8)}
+                y2={tgt.y - (dy / dist) * (tgtR + 8)}
+                stroke={EDGE_COLORS[edge.type] || "#555"}
+                strokeWidth={2}
+                strokeOpacity={0.7}
+                markerEnd={`url(#arrow-${edge.type})`}
+              />
+            );
+          })}
+
+          {/* Nodes */}
+          {nodes.map((node) => {
+            const isHovered = hoveredNode?.id === node.id;
+            const isSelected = selectedNode?.id === node.id;
+            const r = node.hasSigma ? 14 : 10;
+            const fillColor = node.hasSigma
+              ? "#ef4444"
+              : (SEVERITY_NODE_COLORS[currentChain.severity] || "#60a5fa");
+
+            return (
+              <g
+                key={`n-${node.id}`}
+                data-node={node.id}
+                transform={`translate(${node.x}, ${node.y})`}
+                style={{ cursor: "pointer" }}
+                onMouseEnter={() => setHoveredNode(node)}
+                onMouseLeave={() => setHoveredNode(null)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedNode(prev => prev?.id === node.id ? null : node);
+                }}
+              >
+                {/* Glow ring for SIGMA nodes */}
+                {node.hasSigma && (
+                  <circle r={r + 6} fill="none" stroke="#ef4444" strokeWidth={2} strokeOpacity={0.3}>
+                    <animate attributeName="r" values={`${r + 4};${r + 8};${r + 4}`} dur="2s" repeatCount="indefinite" />
+                    <animate attributeName="stroke-opacity" values="0.4;0.1;0.4" dur="2s" repeatCount="indefinite" />
+                  </circle>
+                )}
+                <circle
+                  r={r}
+                  fill={fillColor}
+                  stroke={isHovered || isSelected ? "#fff" : "rgba(0,0,0,0.4)"}
+                  strokeWidth={isHovered || isSelected ? 2.5 : 1}
+                />
+                {/* Node label */}
+                <text y={-r - 6} textAnchor="middle" fill="#ddd" fontSize="0.65rem" fontFamily="monospace" style={{ pointerEvents: "none" }}>
+                  {node.label.length > 20 ? node.label.slice(0, 18) + "…" : node.label}
+                </text>
+                {/* SIGMA badge */}
+                {node.hasSigma && (
+                  <text y={r + 14} textAnchor="middle" fill="#ef4444" fontSize="0.6rem" fontWeight="bold" style={{ pointerEvents: "none" }}>
+                    ⚠ {node.sigmaRules.length} rule{node.sigmaRules.length !== 1 ? "s" : ""}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* Hover tooltip */}
+      {hoveredNode && !selectedNode && (
+        <div className="graph-tooltip">
+          <strong>{hoveredNode.label}</strong>
+          <div style={{ fontSize: "0.75rem", color: "#aaa", marginTop: 4 }}>
+            Event ID: {hoveredNode.entry.eventId || "?"}<br />
+            {hoveredNode.entry.timestamp instanceof Date
+              ? hoveredNode.entry.timestamp.toLocaleString()
+              : ""}
+          </div>
+          {hoveredNode.hasSigma && (
+            <div style={{ marginTop: 6, borderTop: "1px solid #333", paddingTop: 6 }}>
+              <div style={{ color: "#ef4444", fontWeight: "bold", fontSize: "0.75rem" }}>⚠ SIGMA Detections:</div>
+              {hoveredNode.sigmaRules.map((r, i) => (
+                <div key={i} style={{ fontSize: "0.7rem", color: "#fca5a5", marginTop: 2 }}>• {r}</div>
+              ))}
+            </div>
+          )}
+          <div style={{ fontSize: "0.6rem", color: "#666", marginTop: 4 }}>Click for details</div>
+        </div>
+      )}
+
+      {/* Selected node detail panel — shows full SIGMA detection info */}
+      {selectedNode && (
+        <div className="graph-detail-panel">
+          <div className="graph-detail-header">
+            <strong>{selectedNode.label}</strong>
+            <button className="graph-detail-close" onClick={() => setSelectedNode(null)}>✕</button>
+          </div>
+          <div className="graph-detail-meta">
+            <span>Event ID: {selectedNode.entry.eventId || "?"}</span>
+            <span>
+              {selectedNode.entry.timestamp instanceof Date
+                ? selectedNode.entry.timestamp.toLocaleString(undefined, { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+                : ""}
+            </span>
+            {selectedNode.entry.computer && <span>Host: {selectedNode.entry.computer}</span>}
+          </div>
+
+          {selectedNode.sigmaDetails.length > 0 ? (
+            <div className="graph-detail-sigma">
+              <div className="graph-detail-sigma-title">🔍 SIGMA Detections — What matched:</div>
+              {selectedNode.sigmaDetails.map((det, di) => (
+                <div key={di} className="graph-detail-rule">
+                  <div className="graph-detail-rule-name">⚠ {det.rule}</div>
+                  {det.fields.length > 0 && (
+                    <div className="graph-detail-fields">
+                      {det.fields.map((f, fi) => (
+                        <div key={fi} className="graph-detail-field-row">
+                          <span className="graph-detail-field-name">{f.field}</span>
+                          <span className="graph-detail-field-arrow">→</span>
+                          <span className="graph-detail-field-value" title={f.value}>
+                            {f.value.length > 60 ? f.value.slice(0, 58) + "…" : f.value}
+                          </span>
+                          {f.modifier && <span className="graph-detail-modifier">{f.modifier}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 8 }}>No SIGMA detections for this event.</div>
+          )}
+
+          <button
+            className="graph-detail-pivot-btn"
+            onClick={() => onPivotToEvent?.(selectedNode.entry)}
+          >
+            📄 View Full Event
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Timeline visualization component
 interface ChainTimelineProps {
   chains: CorrelatedChain[];
   formatDuration: (ms: number) => string;
+  onPivotToEvent?: (entry: LogEntry) => void;
 }
 
 interface StorylineSummaryProps {
@@ -349,13 +894,8 @@ function buildStorySteps(chain: CorrelatedChain) {
       return false;
     });
 
-    // Extract fields
-    const getField = (name: string) => {
-      const match = event.rawLine?.match(
-        new RegExp(`<Data Name="${name}">([^<]*)</Data>`, "i"),
-      );
-      return match ? match[1] : null;
-    };
+    // Extract fields via shared utility
+    const getField = (name: string) => getEventField(event, name);
 
     const image = getField("Image");
     const proc = image?.split(/[\\\/]/).pop() || null;
@@ -370,6 +910,14 @@ function buildStorySteps(chain: CorrelatedChain) {
 
     let summary = "";
     let detail = "";
+
+    // Additional fields for richer story
+    const sourceImage = getField("SourceImage");
+    const targetImage = getField("TargetImage");
+    const grantedAccess = getField("GrantedAccess");
+    const pipeName = getField("PipeName");
+    const protocol = getField("Protocol");
+    const queryResults = getField("QueryResults");
 
     // Build narrative based on event type
     switch (event.eventId) {
@@ -387,6 +935,17 @@ function buildStorySteps(chain: CorrelatedChain) {
         summary = proc ? `${proc} connected to network` : "Network connection";
         if (destIp) {
           detail = destPort ? `${destIp}:${destPort}` : destIp;
+          if (protocol) detail += ` [${protocol}]`;
+        }
+        break;
+      case 5: // Process Terminate
+        summary = proc ? `${proc} terminated` : "Process terminated";
+        break;
+      case 6: // Driver Load
+        summary = proc ? `Driver loaded: ${proc}` : "Driver loaded";
+        if (imageLoaded) {
+          const driver = imageLoaded.split(/[\\\/]/).pop();
+          summary = `Driver loaded: ${driver}`;
         }
         break;
       case 7: // Image Loaded
@@ -397,9 +956,23 @@ function buildStorySteps(chain: CorrelatedChain) {
           summary = "DLL/module loaded";
         }
         break;
-      case 10: // Process Access
-        summary = proc ? `${proc} accessed another process` : "Process access";
+      case 8: {
+        // CreateRemoteThread
+        const srcProc = sourceImage?.split(/[\\\/]/).pop() || proc || "Unknown";
+        const tgtProc = targetImage?.split(/[\\\/]/).pop() || "unknown process";
+        summary = `${srcProc} injected thread into ${tgtProc}`;
         break;
+      }
+      case 10: {
+        // Process Access
+        const srcProc10 =
+          sourceImage?.split(/[\\\/]/).pop() || proc || "Unknown";
+        const tgtProc10 =
+          targetImage?.split(/[\\\/]/).pop() || "unknown process";
+        summary = `${srcProc10} accessed ${tgtProc10}`;
+        if (grantedAccess) detail = `Access rights: ${grantedAccess}`;
+        break;
+      }
       case 11: // File Create
         if (targetFilename) {
           const file = targetFilename.split(/[\\\/]/).pop();
@@ -413,20 +986,42 @@ function buildStorySteps(chain: CorrelatedChain) {
       case 13:
       case 14: // Registry events
         if (targetObject) {
-          summary = proc ? `${proc} modified registry` : "Registry modified";
+          const action =
+            event.eventId === 12
+              ? "added/deleted"
+              : event.eventId === 13
+                ? "set value in"
+                : "renamed";
+          summary = proc ? `${proc} ${action} registry` : `Registry ${action}`;
           detail = targetObject;
         } else {
           summary = "Registry activity";
         }
+        break;
+      case 15: // File Stream Created
+        summary = proc
+          ? `${proc} created alternate data stream`
+          : "ADS created";
+        if (targetFilename) detail = targetFilename;
+        break;
+      case 17: // Pipe Created
+        summary = proc ? `${proc} created named pipe` : "Named pipe created";
+        if (pipeName) detail = pipeName;
+        break;
+      case 18: // Pipe Connected
+        summary = proc ? `${proc} connected to pipe` : "Pipe connected";
+        if (pipeName) detail = pipeName;
         break;
       case 22: // DNS Query
         summary = proc ? `${proc} performed DNS query` : "DNS query";
         const queryName = getField("QueryName");
         if (queryName) {
           detail = queryName;
+          if (queryResults) detail += ` → ${queryResults}`;
         }
         break;
-      case 23: // File Delete
+      case 23:
+      case 26: // File Delete
         if (targetFilename) {
           const file = targetFilename.split(/[\\\/]/).pop();
           summary = proc ? `${proc} deleted ${file}` : `Deleted ${file}`;
@@ -434,10 +1029,22 @@ function buildStorySteps(chain: CorrelatedChain) {
           summary = "File deleted";
         }
         break;
-      default:
+      case 25: // Process Tampering
         summary = proc
-          ? `${proc} (Event ${event.eventId})`
-          : `Event ${event.eventId}`;
+          ? `${proc} — process tampering detected`
+          : "Process tampering";
+        break;
+      default: {
+        // Use the event type description map for all other events
+        const typeDesc = EVENT_TYPE_DESCRIPTIONS[event.eventId || 0];
+        if (typeDesc) {
+          summary = proc ? `${proc} — ${typeDesc}` : typeDesc;
+        } else {
+          summary = proc
+            ? `${proc} (Event ${event.eventId})`
+            : `Event ${event.eventId}`;
+        }
+      }
     }
 
     // Add user context if available
@@ -468,6 +1075,9 @@ function buildStorySteps(chain: CorrelatedChain) {
 function StorylineSummary({ chains }: StorylineSummaryProps) {
   const formatRange = (chain: CorrelatedChain) => {
     const opts: Intl.DateTimeFormatOptions = {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
@@ -475,7 +1085,7 @@ function StorylineSummary({ chains }: StorylineSummaryProps) {
     };
     if (!chain.startTime || !chain.endTime) return "Unknown time range";
     try {
-      return `${chain.startTime.toLocaleTimeString(undefined, opts)} → ${chain.endTime.toLocaleTimeString(undefined, opts)}`;
+      return `${chain.startTime.toLocaleDateString("en-GB", opts)} → ${chain.endTime.toLocaleDateString("en-GB", opts)}`;
     } catch {
       return "Invalid time range";
     }
@@ -547,7 +1157,10 @@ function StorylineSummary({ chains }: StorylineSummaryProps) {
                       {step.time
                         ? (() => {
                             try {
-                              return step.time.toLocaleTimeString(undefined, {
+                              return step.time.toLocaleDateString("en-GB", {
+                                day: "2-digit",
+                                month: "short",
+                                year: "numeric",
                                 hour: "2-digit",
                                 minute: "2-digit",
                                 second: "2-digit",
@@ -594,7 +1207,11 @@ function StorylineSummary({ chains }: StorylineSummaryProps) {
   );
 }
 
-function ChainTimeline({ chains, formatDuration }: ChainTimelineProps) {
+function ChainTimeline({
+  chains,
+  formatDuration,
+  onPivotToEvent,
+}: ChainTimelineProps) {
   const [expandedChains, setExpandedChains] = useState<Set<string>>(new Set());
   const [showFullChains, setShowFullChains] = useState<Set<string>>(new Set());
 
@@ -696,7 +1313,10 @@ function ChainTimeline({ chains, formatDuration }: ChainTimelineProps) {
   const formatTime = (date: Date | null | undefined) => {
     if (!date) return "Unknown";
     try {
-      return date.toLocaleTimeString(undefined, {
+      return date.toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
@@ -802,6 +1422,7 @@ function ChainTimeline({ chains, formatDuration }: ChainTimelineProps) {
                       getProcessName={getProcessName}
                       formatTime={formatTime}
                       matchesEvent={matchesEvent}
+                      onPivotToEvent={onPivotToEvent}
                     />
                   </div>
                 )}
@@ -822,6 +1443,7 @@ interface ProcessTreeProps {
   getProcessName: (event: LogEntry) => string | null;
   formatTime: (date: Date | null | undefined) => string;
   matchesEvent: (match: SigmaRuleMatch, event: LogEntry) => boolean;
+  onPivotToEvent?: (entry: LogEntry) => void;
 }
 
 interface ProcessNode {
@@ -839,16 +1461,31 @@ function ProcessTree({
   getProcessName,
   formatTime,
   matchesEvent,
+  onPivotToEvent,
 }: ProcessTreeProps) {
-  const getField = (event: LogEntry, fieldName: string): string | null => {
-    if (event.eventData && event.eventData[fieldName]) {
-      return event.eventData[fieldName];
+  // Use the shared getEventField utility
+  const getField = (event: LogEntry, fieldName: string): string | null =>
+    getEventField(event, fieldName);
+
+  /** Human-readable event type label */
+  const getEventTypeLabel = (eventId: number | undefined): string => {
+    if (!eventId) return "Unknown Event";
+    return EVENT_TYPE_DESCRIPTIONS[eventId] || `Event ${eventId}`;
+  };
+
+  /** Extract MITRE ATT&CK technique IDs from SIGMA rule tags */
+  const getMitreTags = (rules: SigmaRuleMatch[]): string[] => {
+    const tags = new Set<string>();
+    for (const rule of rules) {
+      if (rule.rule.tags) {
+        for (const tag of rule.rule.tags) {
+          if (tag.startsWith("attack.t")) {
+            tags.add(tag.replace("attack.", "").toUpperCase());
+          }
+        }
+      }
     }
-    if (!event.rawLine) return null;
-    const match = event.rawLine.match(
-      new RegExp(`<Data Name="${fieldName}">([^<]*)</Data>`, "i"),
-    );
-    return match ? match[1] : null;
+    return Array.from(tags);
   };
 
   // Build hierarchical process tree using ProcessGuid for accurate parent-child relationships
@@ -1106,6 +1743,20 @@ function ProcessTree({
                 );
                 const hasMatch = uniqueMatchingRules.length > 0;
 
+                // MITRE ATT&CK tags
+                const mitreTags = hasMatch
+                  ? getMitreTags(uniqueMatchingRules)
+                  : [];
+
+                // Core fields
+                const image = getField(event, "Image");
+                const parentImage = getField(event, "ParentImage");
+                const parentCommandLine = getField(event, "ParentCommandLine");
+                const hashes = getField(event, "Hashes");
+                const integrityLevel = getField(event, "IntegrityLevel");
+                const logonId = getField(event, "LogonId");
+                const ruleName = getField(event, "RuleName");
+
                 // Event-specific fields
                 const targetObject = getField(event, "TargetObject");
                 const details = getField(event, "Details");
@@ -1114,17 +1765,44 @@ function ProcessTree({
                 const destHostname = getField(event, "DestinationHostname");
                 const sourceIp = getField(event, "SourceIp");
                 const sourcePort = getField(event, "SourcePort");
+                const protocol = getField(event, "Protocol");
+                const initiated = getField(event, "Initiated");
                 const targetFilename = getField(event, "TargetFilename");
                 const imageLoaded = getField(event, "ImageLoaded");
+                const signature = getField(event, "Signature");
+                const signed = getField(event, "Signed");
+                const sourceImage = getField(event, "SourceImage");
+                const targetImage = getField(event, "TargetImage");
+                const grantedAccess = getField(event, "GrantedAccess");
+                const callTrace = getField(event, "CallTrace");
+                const queryName = getField(event, "QueryName");
+                const queryResults = getField(event, "QueryResults");
+                const pipeName = getField(event, "PipeName");
+                const startFunction = getField(event, "StartFunction");
+                const startModule = getField(event, "StartModule");
+                const newThreadId = getField(event, "NewThreadId");
+
+                // Event type label
+                const eventTypeLabel = getEventTypeLabel(event.eventId);
 
                 return (
                   <div
                     key={eventIdx}
                     className={`process-event ${hasMatch ? "has-match" : ""}`}
+                    onClick={() => onPivotToEvent?.(event)}
+                    style={{ cursor: onPivotToEvent ? "pointer" : undefined }}
+                    title={
+                      onPivotToEvent
+                        ? "Click to view full event details"
+                        : undefined
+                    }
                   >
                     <div className="event-header">
                       <div className="event-meta">
-                        <span className="event-id">ID: {event.eventId}</span>
+                        <span className="event-type-label">
+                          {eventTypeLabel}
+                        </span>
+                        <span className="event-id">EID {event.eventId}</span>
                         <span className="event-time">
                           {formatTime(event.timestamp)}
                         </span>
@@ -1135,22 +1813,173 @@ function ProcessTree({
                           <span className="sigma-tooltip">
                             {uniqueMatchingRules.map((m, idx) => (
                               <span key={idx} className="rule-line">
-                                {m.rule.title}
+                                <strong>{m.rule.title}</strong>
+                                {m.rule.level && (
+                                  <span className="rule-level">
+                                    {" "}
+                                    [{m.rule.level}]
+                                  </span>
+                                )}
+                                {m.rule.description && (
+                                  <span className="rule-desc">
+                                    {m.rule.description}
+                                  </span>
+                                )}
                               </span>
                             ))}
                           </span>
                         </span>
                       )}
+                      {mitreTags.length > 0 && (
+                        <span className="mitre-tags">
+                          {mitreTags.map((tag, i) => (
+                            <span key={i} className="mitre-tag">
+                              {tag}
+                            </span>
+                          ))}
+                        </span>
+                      )}
                     </div>
-                    {commandLine && (
+                    {/* Process info */}
+                    {image && (
                       <div
                         className="event-detail"
+                        title={image}
+                        style={{ wordBreak: "break-all" }}
+                      >
+                        <span className="detail-label">Image:</span> {image}
+                      </div>
+                    )}
+                    {commandLine && (
+                      <div
+                        className="event-detail event-detail-cmd"
                         title={commandLine}
                         style={{ wordBreak: "break-all" }}
                       >
                         <span className="detail-label">CMD:</span> {commandLine}
                       </div>
                     )}
+                    {parentImage && (
+                      <div
+                        className="event-detail"
+                        title={parentImage}
+                        style={{ wordBreak: "break-all" }}
+                      >
+                        <span className="detail-label">Parent:</span>{" "}
+                        {parentImage}
+                      </div>
+                    )}
+                    {parentCommandLine && parentCommandLine !== commandLine && (
+                      <div
+                        className="event-detail"
+                        title={parentCommandLine}
+                        style={{ wordBreak: "break-all" }}
+                      >
+                        <span className="detail-label">Parent CMD:</span>{" "}
+                        {parentCommandLine}
+                      </div>
+                    )}
+                    {/* Process access specifics */}
+                    {sourceImage && event.eventId === 10 && (
+                      <div
+                        className="event-detail"
+                        title={sourceImage}
+                        style={{ wordBreak: "break-all" }}
+                      >
+                        <span className="detail-label">Source:</span>{" "}
+                        {sourceImage}
+                      </div>
+                    )}
+                    {targetImage && (
+                      <div
+                        className="event-detail"
+                        title={targetImage}
+                        style={{ wordBreak: "break-all" }}
+                      >
+                        <span className="detail-label">Target:</span>{" "}
+                        {targetImage}
+                      </div>
+                    )}
+                    {grantedAccess && (
+                      <div className="event-detail">
+                        <span className="detail-label">Access:</span>{" "}
+                        {grantedAccess}
+                      </div>
+                    )}
+                    {callTrace && (
+                      <div
+                        className="event-detail"
+                        title={callTrace}
+                        style={{ wordBreak: "break-all" }}
+                      >
+                        <span className="detail-label">CallTrace:</span>{" "}
+                        {callTrace.length > 120
+                          ? callTrace.slice(0, 120) + "..."
+                          : callTrace}
+                      </div>
+                    )}
+                    {/* Remote thread specifics */}
+                    {startModule && (
+                      <div
+                        className="event-detail"
+                        title={startModule}
+                        style={{ wordBreak: "break-all" }}
+                      >
+                        <span className="detail-label">StartModule:</span>{" "}
+                        {startModule}
+                      </div>
+                    )}
+                    {startFunction && (
+                      <div className="event-detail">
+                        <span className="detail-label">StartFunction:</span>{" "}
+                        {startFunction}
+                      </div>
+                    )}
+                    {newThreadId && (
+                      <div className="event-detail">
+                        <span className="detail-label">ThreadId:</span>{" "}
+                        {newThreadId}
+                      </div>
+                    )}
+                    {/* Network specifics */}
+                    {destIp && (
+                      <div className="event-detail">
+                        <span className="detail-label">Dest:</span> {destIp}
+                        {destPort ? `:${destPort}` : ""}
+                        {destHostname ? ` (${destHostname})` : ""}
+                        {protocol ? ` [${protocol}]` : ""}
+                      </div>
+                    )}
+                    {sourceIp && (
+                      <div className="event-detail">
+                        <span className="detail-label">Source:</span> {sourceIp}
+                        {sourcePort ? `:${sourcePort}` : ""}
+                      </div>
+                    )}
+                    {initiated && (
+                      <div className="event-detail">
+                        <span className="detail-label">Initiated:</span>{" "}
+                        {initiated}
+                      </div>
+                    )}
+                    {/* DNS specifics */}
+                    {queryName && (
+                      <div className="event-detail">
+                        <span className="detail-label">DNS Query:</span>{" "}
+                        {queryName}
+                      </div>
+                    )}
+                    {queryResults && (
+                      <div
+                        className="event-detail"
+                        title={queryResults}
+                        style={{ wordBreak: "break-all" }}
+                      >
+                        <span className="detail-label">DNS Result:</span>{" "}
+                        {queryResults}
+                      </div>
+                    )}
+                    {/* Registry specifics */}
                     {targetObject && (
                       <div
                         className="event-detail"
@@ -1170,19 +1999,7 @@ function ProcessTree({
                         <span className="detail-label">Value:</span> {details}
                       </div>
                     )}
-                    {destIp && (
-                      <div className="event-detail">
-                        <span className="detail-label">Dest:</span> {destIp}
-                        {destPort ? `:${destPort}` : ""}
-                        {destHostname ? ` (${destHostname})` : ""}
-                      </div>
-                    )}
-                    {sourceIp && !destIp && (
-                      <div className="event-detail">
-                        <span className="detail-label">Source:</span> {sourceIp}
-                        {sourcePort ? `:${sourcePort}` : ""}
-                      </div>
-                    )}
+                    {/* File specifics */}
                     {targetFilename && (
                       <div
                         className="event-detail"
@@ -1193,7 +2010,8 @@ function ProcessTree({
                         {targetFilename}
                       </div>
                     )}
-                    {imageLoaded && !commandLine && (
+                    {/* Image/DLL loaded */}
+                    {imageLoaded && (
                       <div
                         className="event-detail"
                         title={imageLoaded}
@@ -1201,11 +2019,59 @@ function ProcessTree({
                       >
                         <span className="detail-label">Loaded:</span>{" "}
                         {imageLoaded}
+                        {signed
+                          ? ` [${signed === "true" ? "Signed" : "Unsigned"}]`
+                          : ""}
                       </div>
                     )}
-                    {user && (
+                    {signature && signed !== "true" && (
                       <div className="event-detail">
-                        <span className="detail-label">User:</span> {user}
+                        <span className="detail-label">Signature:</span>{" "}
+                        {signature}
+                      </div>
+                    )}
+                    {/* Pipe */}
+                    {pipeName && (
+                      <div className="event-detail">
+                        <span className="detail-label">Pipe:</span> {pipeName}
+                      </div>
+                    )}
+                    {/* Hashes, integrity, etc. */}
+                    {hashes && (
+                      <div
+                        className="event-detail"
+                        title={hashes}
+                        style={{ wordBreak: "break-all" }}
+                      >
+                        <span className="detail-label">Hashes:</span> {hashes}
+                      </div>
+                    )}
+                    {/* Context bar: integrity + user + logonId + rule */}
+                    {(user || integrityLevel || logonId || ruleName) && (
+                      <div className="event-context-bar">
+                        {user && (
+                          <span className="context-item">
+                            <span className="detail-label">User:</span> {user}
+                          </span>
+                        )}
+                        {integrityLevel && (
+                          <span className="context-item">
+                            <span className="detail-label">Integrity:</span>{" "}
+                            {integrityLevel}
+                          </span>
+                        )}
+                        {logonId && (
+                          <span className="context-item">
+                            <span className="detail-label">LogonId:</span>{" "}
+                            {logonId}
+                          </span>
+                        )}
+                        {ruleName && (
+                          <span className="context-item">
+                            <span className="detail-label">Rule:</span>{" "}
+                            {ruleName}
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>

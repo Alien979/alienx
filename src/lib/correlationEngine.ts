@@ -7,6 +7,14 @@
 import { LogEntry } from "../types";
 import { SigmaRuleMatch } from "./sigma/types";
 
+/** Options for the correlation engine. */
+export interface CorrelationOptions {
+  /** Temporal proximity window in milliseconds. Events on the same host
+   *  within this window are linked with a "temporal" relationship.
+   *  Set to 0 to disable. Default: 30000 (30 s). */
+  temporalWindowMs?: number;
+}
+
 // Relationship types between events
 export type RelationshipType =
   | "process_spawn" // Parent spawned child process
@@ -69,6 +77,71 @@ const EVENT_TYPES = {
   CLIPBOARD: 24,
   PROCESS_TAMPERING: 25,
   FILE_DELETE_LOGGED: 26,
+};
+
+/**
+ * Human-readable descriptions for Sysmon and Windows Security event IDs
+ */
+export const EVENT_TYPE_DESCRIPTIONS: Record<number, string> = {
+  1: "Process Create",
+  2: "File Creation Time Changed",
+  3: "Network Connection",
+  4: "Sysmon Service State Changed",
+  5: "Process Terminated",
+  6: "Driver Loaded",
+  7: "Image Loaded",
+  8: "CreateRemoteThread",
+  9: "RawAccessRead",
+  10: "Process Accessed",
+  11: "File Created",
+  12: "Registry Object Added/Deleted",
+  13: "Registry Value Set",
+  14: "Registry Object Renamed",
+  15: "File Stream Created",
+  16: "Sysmon Config Changed",
+  17: "Pipe Created",
+  18: "Pipe Connected",
+  19: "WMI Event Filter",
+  20: "WMI Event Consumer",
+  21: "WMI Event Binding",
+  22: "DNS Query",
+  23: "File Deleted",
+  24: "Clipboard Changed",
+  25: "Process Tampering",
+  26: "File Delete Logged",
+  // Windows Security event IDs
+  4624: "Logon Success",
+  4625: "Logon Failure",
+  4634: "Logoff",
+  4648: "Explicit Credential Logon",
+  4656: "Handle Requested",
+  4657: "Registry Value Modified",
+  4663: "Object Accessed",
+  4672: "Special Privileges Assigned",
+  4673: "Privileged Service Called",
+  4688: "Process Created",
+  4689: "Process Exited",
+  4697: "Service Installed",
+  4698: "Scheduled Task Created",
+  4699: "Scheduled Task Deleted",
+  4700: "Scheduled Task Enabled",
+  4702: "Scheduled Task Updated",
+  4720: "User Account Created",
+  4722: "User Account Enabled",
+  4724: "Password Reset Attempt",
+  4728: "Member Added to Security Group",
+  4732: "Member Added to Local Group",
+  4738: "User Account Changed",
+  4768: "Kerberos TGT Requested",
+  4769: "Kerberos Service Ticket Requested",
+  4770: "Kerberos Service Ticket Renewed",
+  4771: "Kerberos Pre-Auth Failed",
+  4776: "NTLM Authentication",
+  5140: "Network Share Accessed",
+  5145: "Network Share Object Checked",
+  5156: "Firewall Connection Allowed",
+  5157: "Firewall Connection Blocked",
+  7045: "Service Installed",
 };
 
 // Extract field from structured eventData (preferred) or rawLine
@@ -233,6 +306,7 @@ class UnionFind {
 function findRelationships(
   entries: LogEntry[],
   indices: EventIndices,
+  temporalWindowMs: number = 30000,
 ): EventRelationship[] {
   const relationships: EventRelationship[] = [];
 
@@ -370,6 +444,49 @@ function findRelationships(
     }
   });
 
+  // Temporal proximity relationships: link events on the same host
+  // that occur within the configured time window and share no GUID link.
+  if (temporalWindowMs > 0) {
+    // We iterate events sorted by time; entries are already sorted.
+    for (const [, hostIndices] of indices.byComputer) {
+      // Only bother if the host has multiple events
+      if (hostIndices.length < 2) continue;
+
+      // hostIndices are in insertion order; sort by timestamp for safety
+      const sorted = [...hostIndices].sort(
+        (a, b) =>
+          entries[a].timestamp.getTime() - entries[b].timestamp.getTime(),
+      );
+
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const aIdx = sorted[i];
+        const aTime = entries[aIdx].timestamp.getTime();
+
+        for (let j = i + 1; j < sorted.length; j++) {
+          const bIdx = sorted[j];
+          const diff = entries[bIdx].timestamp.getTime() - aTime;
+          if (diff > temporalWindowMs) break; // Sorted, no need to check further.
+
+          // Only add if they share no GUID-based relationship already.
+          const aGuid = getProcessGuid(entries[aIdx]);
+          const bGuid = getProcessGuid(entries[bIdx]);
+          if (aGuid && bGuid && aGuid === bGuid) continue; // Already linked by same_process.
+
+          const bParent = getParentProcessGuid(entries[bIdx]);
+          if (aGuid && bParent && aGuid === bParent) continue; // Already linked by spawn.
+
+          relationships.push({
+            sourceIndex: aIdx,
+            targetIndex: bIdx,
+            type: "temporal",
+            field: "Timestamp",
+            confidence: Math.max(0.3, 1 - diff / temporalWindowMs),
+          });
+        }
+      }
+    }
+  }
+
   return relationships;
 }
 
@@ -437,43 +554,127 @@ function calculateSeverity(
   return { severity, score };
 }
 
-// Generate summary for a chain
+// Generate a rich, analyst-friendly summary for a chain
 function generateChainSummary(
   chain: LogEntry[],
   _relationships: EventRelationship[],
+  sigmaMatches: SigmaRuleMatch[],
 ): string {
   const processes = new Set<string>();
   const eventTypes = new Set<number>();
+  const networkDests = new Set<string>();
+  const filePaths = new Set<string>();
+  const regKeys = new Set<string>();
+  const dnsQueries = new Set<string>();
 
   for (const event of chain) {
     const image = getProcessImage(event);
     if (image) processes.add(image);
     if (event.eventId) eventTypes.add(event.eventId);
+
+    const destIp = extractField(event, "DestinationIp");
+    const destPort = extractField(event, "DestinationPort");
+    if (destIp) networkDests.add(destPort ? `${destIp}:${destPort}` : destIp);
+
+    const targetFile = extractField(event, "TargetFilename");
+    if (targetFile) {
+      const fname = targetFile.split(/[\\\/]/).pop();
+      if (fname) filePaths.add(fname);
+    }
+
+    const regKey = extractField(event, "TargetObject");
+    if (regKey) {
+      // Abbreviate long registry paths
+      const parts = regKey.split("\\");
+      regKeys.add(
+        parts.length > 3 ? `...\\${parts.slice(-2).join("\\")}` : regKey,
+      );
+    }
+
+    const queryName = extractField(event, "QueryName");
+    if (queryName) dnsQueries.add(queryName);
   }
 
   const parts: string[] = [];
 
+  // Lead with top SIGMA rule if available
+  if (sigmaMatches.length > 0) {
+    const topRule = sigmaMatches[0];
+    parts.push(topRule.rule.title);
+  }
+
+  // Processes involved
   if (processes.size > 0) {
+    const procList = Array.from(processes).slice(0, 4);
     parts.push(
-      `Processes: ${Array.from(processes).slice(0, 3).join(", ")}${processes.size > 3 ? "..." : ""}`,
+      procList.join(" → ") +
+        (processes.size > 4 ? ` +${processes.size - 4} more` : ""),
     );
   }
 
+  // Key actions with specifics
   const actions: string[] = [];
   if (
     eventTypes.has(EVENT_TYPES.PROCESS_CREATE) ||
     eventTypes.has(EVENT_TYPES.SECURITY_PROCESS_CREATE)
-  )
-    actions.push("spawned");
-  if (eventTypes.has(EVENT_TYPES.NETWORK_CONNECT)) actions.push("connected");
-  if (eventTypes.has(EVENT_TYPES.FILE_CREATE)) actions.push("created files");
-  if (eventTypes.has(EVENT_TYPES.REGISTRY_SET))
-    actions.push("modified registry");
+  ) {
+    const procCount = chain.filter(
+      (e) =>
+        e.eventId === EVENT_TYPES.PROCESS_CREATE ||
+        e.eventId === EVENT_TYPES.SECURITY_PROCESS_CREATE,
+    ).length;
+    actions.push(`${procCount} process creation${procCount > 1 ? "s" : ""}`);
+  }
+  if (eventTypes.has(EVENT_TYPES.NETWORK_CONNECT)) {
+    if (networkDests.size > 0) {
+      actions.push(
+        `network → ${Array.from(networkDests).slice(0, 2).join(", ")}`,
+      );
+    } else {
+      actions.push("network connection");
+    }
+  }
+  if (eventTypes.has(EVENT_TYPES.DNS_QUERY) && dnsQueries.size > 0) {
+    actions.push(`DNS: ${Array.from(dnsQueries).slice(0, 2).join(", ")}`);
+  }
+  if (
+    eventTypes.has(EVENT_TYPES.FILE_CREATE) ||
+    eventTypes.has(EVENT_TYPES.FILE_DELETE)
+  ) {
+    if (filePaths.size > 0) {
+      actions.push(`file: ${Array.from(filePaths).slice(0, 2).join(", ")}`);
+    } else {
+      actions.push("file operation");
+    }
+  }
+  if (
+    eventTypes.has(EVENT_TYPES.REGISTRY_SET) ||
+    eventTypes.has(EVENT_TYPES.REGISTRY_EVENT)
+  ) {
+    if (regKeys.size > 0) {
+      actions.push(`registry: ${Array.from(regKeys).slice(0, 1).join("")}`);
+    } else {
+      actions.push("registry modification");
+    }
+  }
   if (eventTypes.has(EVENT_TYPES.CREATE_REMOTE_THREAD))
-    actions.push("injected");
+    actions.push("remote thread injection");
+  if (eventTypes.has(EVENT_TYPES.PROCESS_ACCESS))
+    actions.push("process memory access");
+  if (eventTypes.has(EVENT_TYPES.IMAGE_LOAD)) {
+    const loadCount = chain.filter(
+      (e) => e.eventId === EVENT_TYPES.IMAGE_LOAD,
+    ).length;
+    actions.push(`${loadCount} DLL load${loadCount > 1 ? "s" : ""}`);
+  }
+  if (eventTypes.has(EVENT_TYPES.DRIVER_LOAD)) actions.push("driver loaded");
+  if (eventTypes.has(EVENT_TYPES.PIPE_CREATED))
+    actions.push("named pipe created");
+  if (eventTypes.has(EVENT_TYPES.PROCESS_TAMPERING))
+    actions.push("process tampering");
 
   if (actions.length > 0) {
-    parts.push(`Actions: ${actions.join(", ")}`);
+    parts.push(actions.join(", "));
   }
 
   return parts.join(" | ") || `${chain.length} related events`;
@@ -484,6 +685,7 @@ export function correlateEvents(
   entries: LogEntry[],
   sigmaMatches: Map<string, SigmaRuleMatch[]>,
   onProgress?: (processed: number, total: number) => void,
+  options?: CorrelationOptions,
 ): CorrelatedChain[] {
   if (entries.length === 0) return [];
 
@@ -570,7 +772,12 @@ export function correlateEvents(
 
   // Find all relationships
   if (onProgress) onProgress(2, 5);
-  const relationships = findRelationships(entriesToProcess, indices);
+  const temporalWindowMs = options?.temporalWindowMs ?? 30000;
+  const relationships = findRelationships(
+    entriesToProcess,
+    indices,
+    temporalWindowMs,
+  );
 
   // Use Union-Find to group related events
   if (onProgress) onProgress(3, 5);
@@ -698,16 +905,23 @@ export function correlateEvents(
       sigmaMatches: uniqueMatches,
       severity,
       score,
-      summary: generateChainSummary(chainEvents, chainRelationships),
+      summary: generateChainSummary(
+        chainEvents,
+        chainRelationships,
+        uniqueMatches,
+      ),
     });
   }
 
   // Sort chains by score (most severe first)
   chains.sort((a, b) => b.score - a.score);
 
+  // Filter out trivial single-event chains that add noise
+  const meaningful = chains.filter((c) => c.events.length > 1);
+
   if (onProgress) onProgress(5, 5);
 
-  return chains;
+  return meaningful;
 }
 
 // Get statistics about correlations

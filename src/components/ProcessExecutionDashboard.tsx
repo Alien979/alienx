@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from "react";
 import {
   BarChart,
   Bar,
@@ -10,15 +10,23 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-} from 'recharts';
-import { LogEntry } from '../types';
-import { LEGITIMATE_PROCESSES } from '../lib/legitimateProcesses';
-import { findClosestMatch } from '../lib/levenshtein';
-import './ProcessExecutionDashboard.css';
+} from "recharts";
+import { LogEntry } from "../types";
+import { EventDetailsModal } from "./EventDetailsModal";
+import { LEGITIMATE_PROCESSES } from "../lib/legitimateProcesses";
+import { findClosestMatch } from "../lib/levenshtein";
+import {
+  buildProcessNetworkMap,
+  getExternalDestinations,
+} from "../lib/processNetworkMap";
+import { ProcessSearch } from "./ProcessSearch";
+import { ProcessTimeline } from "./ProcessTimeline";
+import "./ProcessExecutionDashboard.css";
 
 interface ProcessExecutionDashboardProps {
   entries: LogEntry[];
   onBack: () => void;
+  onPivotToEvent?: (entry: LogEntry) => void;
 }
 
 interface ProcessInfo {
@@ -31,10 +39,20 @@ interface ProcessInfo {
   computer: string;
   processId?: string;
   parentProcessId?: string;
+  entry: LogEntry;
 }
 
 // Muted color palette matching the app theme
-const COLORS = ['#60a5fa', '#a78bfa', '#f472b6', '#fbbf24', '#4ade80', '#fb923c', '#f87171', '#94a3b8'];
+const COLORS = [
+  "#60a5fa",
+  "#a78bfa",
+  "#f472b6",
+  "#fbbf24",
+  "#4ade80",
+  "#fb923c",
+  "#f87171",
+  "#94a3b8",
+];
 
 /**
  * Extract process information from EVTX event rawLine
@@ -52,31 +70,37 @@ function extractProcessInfo(entry: LogEntry): ProcessInfo | null {
     }
 
     // Try Data Name format: <Data Name="Image">value</Data>
-    const dataRegex = new RegExp(`<Data Name="${fieldName}"[^>]*>([^<]*)</Data>`, 'i');
+    const dataRegex = new RegExp(
+      `<Data Name="${fieldName}"[^>]*>([^<]*)</Data>`,
+      "i",
+    );
     const dataMatch = entry.rawLine.match(dataRegex);
     if (dataMatch) return dataMatch[1];
 
     // Try direct element format: <Image>value</Image>
-    const directRegex = new RegExp(`<${fieldName}>([^<]*)</${fieldName}>`, 'i');
+    const directRegex = new RegExp(`<${fieldName}>([^<]*)</${fieldName}>`, "i");
     const directMatch = entry.rawLine.match(directRegex);
     if (directMatch) return directMatch[1];
 
-    return '';
+    return "";
   };
 
-  const image = extractField('Image') || extractField('NewProcessName') || '';
+  const image = extractField("Image") || extractField("NewProcessName") || "";
   if (!image) return null;
 
   return {
     image,
-    commandLine: extractField('CommandLine') || extractField('ProcessCommandLine') || '',
-    parentImage: extractField('ParentImage') || extractField('ParentProcessName') || '',
-    user: extractField('User') || extractField('SubjectUserName') || '',
+    commandLine:
+      extractField("CommandLine") || extractField("ProcessCommandLine") || "",
+    parentImage:
+      extractField("ParentImage") || extractField("ParentProcessName") || "",
+    user: extractField("User") || extractField("SubjectUserName") || "",
     timestamp: entry.timestamp,
     eventId: eventId || 0,
-    computer: entry.computer || '',
-    processId: extractField('ProcessId') || extractField('NewProcessId') || '',
-    parentProcessId: extractField('ParentProcessId') || '',
+    computer: entry.computer || "",
+    processId: extractField("ProcessId") || extractField("NewProcessId") || "",
+    parentProcessId: extractField("ParentProcessId") || "",
+    entry,
   };
 }
 
@@ -84,8 +108,8 @@ function extractProcessInfo(entry: LogEntry): ProcessInfo | null {
  * Get the executable name from a full path
  */
 function getExeName(fullPath: string): string {
-  if (!fullPath) return 'Unknown';
-  const parts = fullPath.split('\\');
+  if (!fullPath) return "Unknown";
+  const parts = fullPath.split("\\");
   return parts[parts.length - 1] || fullPath;
 }
 
@@ -95,16 +119,19 @@ function getExeName(fullPath: string): string {
 function categorizeProcess(image: string): string {
   const lowerImage = image.toLowerCase();
 
-  if (lowerImage.includes('\\windows\\system32\\')) return 'System32';
-  if (lowerImage.includes('\\windows\\syswow64\\')) return 'SysWOW64';
-  if (lowerImage.includes('\\program files\\')) return 'Program Files';
-  if (lowerImage.includes('\\program files (x86)\\')) return 'Program Files (x86)';
-  if (lowerImage.includes('\\users\\') && lowerImage.includes('\\appdata\\')) return 'User AppData';
-  if (lowerImage.includes('\\users\\')) return 'User Profile';
-  if (lowerImage.includes('\\windows\\')) return 'Windows';
-  if (lowerImage.includes('\\temp\\') || lowerImage.includes('\\tmp\\')) return 'Temp Folder';
+  if (lowerImage.includes("\\windows\\system32\\")) return "System32";
+  if (lowerImage.includes("\\windows\\syswow64\\")) return "SysWOW64";
+  if (lowerImage.includes("\\program files\\")) return "Program Files";
+  if (lowerImage.includes("\\program files (x86)\\"))
+    return "Program Files (x86)";
+  if (lowerImage.includes("\\users\\") && lowerImage.includes("\\appdata\\"))
+    return "User AppData";
+  if (lowerImage.includes("\\users\\")) return "User Profile";
+  if (lowerImage.includes("\\windows\\")) return "Windows";
+  if (lowerImage.includes("\\temp\\") || lowerImage.includes("\\tmp\\"))
+    return "Temp Folder";
 
-  return 'Other';
+  return "Other";
 }
 
 /**
@@ -115,37 +142,37 @@ function isSuspiciousPath(image: string): boolean {
 
   // Suspicious locations
   const suspiciousPatterns = [
-    '\\temp\\',
-    '\\tmp\\',
-    '\\downloads\\',
-    '\\public\\',
-    '\\perflogs\\',
-    '\\recycler\\',
-    '\\$recycle.bin\\',
-    'c:\\users\\public\\',
+    "\\temp\\",
+    "\\tmp\\",
+    "\\downloads\\",
+    "\\public\\",
+    "\\perflogs\\",
+    "\\recycler\\",
+    "\\$recycle.bin\\",
+    "c:\\users\\public\\",
   ];
 
-  return suspiciousPatterns.some(pattern => lowerImage.includes(pattern));
+  return suspiciousPatterns.some((pattern) => lowerImage.includes(pattern));
 }
 
 /**
  * Default excluded paths for typosquatting analysis
  */
 const DEFAULT_EXCLUDED_PATHS = [
-  '\\windows\\system32\\',
-  '\\windows\\syswow64\\',
-  '\\program files\\splunk\\',
-  '\\program files\\splunkuniversalforwarder\\',
-  '\\program files\\git\\',
-  'c:\\program files\\wsl\\',
-  'c:\\program files\\bravesoftware\\',
-  '\\appdata\\local\\programs\\microsoft vs code\\',
-  '\\appdata\\local\\githubdesktop\\',
-  '\\appdata\\local\\discord\\',
-  '\\appdata\\local\\fluxsoftware\\',
-  '\\appdata\\roaming\\zoom\\',
-  '\\program files\\nodejs\\',
-  '\\microsoft\\windows defender\\',
+  "\\windows\\system32\\",
+  "\\windows\\syswow64\\",
+  "\\program files\\splunk\\",
+  "\\program files\\splunkuniversalforwarder\\",
+  "\\program files\\git\\",
+  "c:\\program files\\wsl\\",
+  "c:\\program files\\bravesoftware\\",
+  "\\appdata\\local\\programs\\microsoft vs code\\",
+  "\\appdata\\local\\githubdesktop\\",
+  "\\appdata\\local\\discord\\",
+  "\\appdata\\local\\fluxsoftware\\",
+  "\\appdata\\roaming\\zoom\\",
+  "\\program files\\nodejs\\",
+  "\\microsoft\\windows defender\\",
 ];
 
 /**
@@ -159,32 +186,47 @@ const DEFAULT_EXCLUDED_PROCESSES: string[] = [...LEGITIMATE_PROCESSES];
  */
 function isExcludedPath(image: string, customExcludedPaths: string[]): boolean {
   const lowerImage = image.toLowerCase();
-  return customExcludedPaths.some(pattern => lowerImage.includes(pattern.toLowerCase()));
+  return customExcludedPaths.some((pattern) =>
+    lowerImage.includes(pattern.toLowerCase()),
+  );
 }
 
-export default function ProcessExecutionDashboard({ entries, onBack }: ProcessExecutionDashboardProps) {
+export default function ProcessExecutionDashboard({
+  entries,
+  onBack,
+  onPivotToEvent,
+}: ProcessExecutionDashboardProps) {
   const [selectedProcess, setSelectedProcess] = useState<string | null>(null);
-  const [typosquattingThreshold, setTyposquattingThreshold] = useState<number>(2);
+  const [pivotEntry, setPivotEntry] = useState<LogEntry | null>(null);
+  const [typosquattingThreshold, setTyposquattingThreshold] =
+    useState<number>(2);
   const [excludedPaths, setExcludedPaths] = useState<string[]>(() => {
-    const saved = localStorage.getItem('processAnalysisExcludedPaths');
+    const saved = localStorage.getItem("processAnalysisExcludedPaths");
     return saved ? JSON.parse(saved) : DEFAULT_EXCLUDED_PATHS;
   });
   const [excludedProcesses, setExcludedProcesses] = useState<string[]>(() => {
-    const saved = localStorage.getItem('processAnalysisExcludedProcesses');
+    const saved = localStorage.getItem("processAnalysisExcludedProcesses");
     return saved ? JSON.parse(saved) : DEFAULT_EXCLUDED_PROCESSES;
   });
-  const [showExclusionEditor, setShowExclusionEditor] = useState<boolean>(false);
-  const [newExcludedPath, setNewExcludedPath] = useState<string>('');
-  const [newExcludedProcess, setNewExcludedProcess] = useState<string>('');
+  const [showExclusionEditor, setShowExclusionEditor] =
+    useState<boolean>(false);
+  const [newExcludedPath, setNewExcludedPath] = useState<string>("");
+  const [newExcludedProcess, setNewExcludedProcess] = useState<string>("");
 
   // Persist excluded paths to localStorage
   useEffect(() => {
-    localStorage.setItem('processAnalysisExcludedPaths', JSON.stringify(excludedPaths));
+    localStorage.setItem(
+      "processAnalysisExcludedPaths",
+      JSON.stringify(excludedPaths),
+    );
   }, [excludedPaths]);
 
   // Persist excluded processes to localStorage
   useEffect(() => {
-    localStorage.setItem('processAnalysisExcludedProcesses', JSON.stringify(excludedProcesses));
+    localStorage.setItem(
+      "processAnalysisExcludedProcesses",
+      JSON.stringify(excludedProcesses),
+    );
   }, [excludedProcesses]);
 
   // Extract all process creation events
@@ -200,6 +242,35 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
 
     return events;
   }, [entries]);
+
+  // Build process → network activity map (Sysmon EID 3 / 22)
+  const networkMap = useMemo(() => buildProcessNetworkMap(entries), [entries]);
+  const externalDests = useMemo(
+    () => getExternalDestinations(networkMap),
+    [networkMap],
+  );
+
+  // Processes with network connections (by exe name)
+  const processesWithNetwork = useMemo(() => {
+    const byExe = new Map<
+      string,
+      { connections: number; dnsQueries: number }
+    >();
+    for (const [, info] of networkMap) {
+      const exe = info.image.split("\\").pop()?.toLowerCase() || info.image;
+      const existing = byExe.get(exe) || { connections: 0, dnsQueries: 0 };
+      existing.connections += info.connections.length;
+      existing.dnsQueries += info.dnsQueries.length;
+      byExe.set(exe, existing);
+    }
+    return byExe;
+  }, [networkMap]);
+
+  // All process names for search
+  const allProcessNames = useMemo(
+    () => processEvents.map((p) => p.image),
+    [processEvents],
+  );
 
   // Top executed processes
   const topProcesses = useMemo(() => {
@@ -235,7 +306,7 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
     const relationships = new Map<string, number>();
 
     for (const proc of processEvents) {
-      const parent = getExeName(proc.parentImage) || 'Unknown';
+      const parent = getExeName(proc.parentImage) || "Unknown";
       const child = getExeName(proc.image);
       const key = `${parent}|${child}`;
       relationships.set(key, (relationships.get(key) || 0) + 1);
@@ -243,7 +314,7 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
 
     return Array.from(relationships.entries())
       .map(([key, count]) => {
-        const [parent, child] = key.split('|');
+        const [parent, child] = key.split("|");
         return { parent, child, count };
       })
       .sort((a, b) => b.count - a.count)
@@ -267,7 +338,7 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
       }
 
       const processName = getExeName(proc.image);
-      const parentProcess = getExeName(proc.parentImage) || 'Unknown';
+      const parentProcess = getExeName(proc.parentImage) || "Unknown";
       const key = `${processName}|${parentProcess}`;
 
       if (matches.has(key)) {
@@ -282,8 +353,9 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
       }
     }
 
-    return Array.from(matches.values())
-      .sort((a, b) => b.occurrences.length - a.occurrences.length);
+    return Array.from(matches.values()).sort(
+      (a, b) => b.occurrences.length - a.occurrences.length,
+    );
   }, [processEvents]);
 
   // Typosquatting detection
@@ -325,7 +397,11 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
       checkedProcesses.add(processName);
 
       // Check for typosquatting against filtered legitimate processes
-      const match = findClosestMatch(processName, filteredLegitimateProcesses, typosquattingThreshold);
+      const match = findClosestMatch(
+        processName,
+        filteredLegitimateProcesses,
+        typosquattingThreshold,
+      );
 
       if (match) {
         matches.set(processName, {
@@ -339,8 +415,7 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
     }
 
     // Convert to array and sort by distance (closer matches are more suspicious)
-    return Array.from(matches.values())
-      .sort((a, b) => a.distance - b.distance);
+    return Array.from(matches.values()).sort((a, b) => a.distance - b.distance);
   }, [processEvents, typosquattingThreshold, excludedPaths, excludedProcesses]);
 
   // User activity
@@ -364,7 +439,7 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
     if (!selectedProcess) return [];
 
     return processEvents
-      .filter(proc => getExeName(proc.image) === selectedProcess)
+      .filter((proc) => getExeName(proc.image) === selectedProcess)
       .slice(0, 50);
   }, [processEvents, selectedProcess]);
 
@@ -375,7 +450,9 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
         <div className="process-header">
           <div>
             <h1>Process Execution Analysis</h1>
-            <p className="subtitle">Sysmon Event ID 1 / Security Event ID 4688</p>
+            <p className="subtitle">
+              Sysmon Event ID 1 / Security Event ID 4688
+            </p>
           </div>
           <button className="back-button" onClick={onBack}>
             ← Back
@@ -384,8 +461,13 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
         <div className="no-data-message">
           <span className="no-data-icon">⚙️</span>
           <h3>No Process Creation Events Found</h3>
-          <p>This analysis requires Sysmon Event ID 1 or Windows Security Event ID 4688 logs.</p>
-          <p>Make sure your EVTX file contains process creation audit events.</p>
+          <p>
+            This analysis requires Sysmon Event ID 1 or Windows Security Event
+            ID 4688 logs.
+          </p>
+          <p>
+            Make sure your EVTX file contains process creation audit events.
+          </p>
         </div>
       </div>
     );
@@ -397,7 +479,8 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
         <div>
           <h1>Process Execution Analysis</h1>
           <p className="subtitle">
-            {processEvents.length.toLocaleString()} process creation events analyzed
+            {processEvents.length.toLocaleString()} process creation events
+            analyzed
           </p>
         </div>
         <button className="back-button" onClick={onBack}>
@@ -406,17 +489,45 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
       </div>
 
       {/* Summary Stats */}
+      <div
+        style={{
+          padding: "12px 16px",
+          marginBottom: 12,
+          borderRadius: 8,
+          background: "rgba(96,165,250,0.06)",
+          border: "1px solid rgba(96,165,250,0.15)",
+          fontSize: "0.85rem",
+          color: "#aaa",
+          lineHeight: 1.6,
+        }}
+      >
+        <strong style={{ color: "#60a5fa" }}>
+          How Process Analysis Works:
+        </strong>{" "}
+        This view reconstructs parent–child process trees from Sysmon Event ID 1
+        and Windows Security Event ID 4688 logs. It reveals command-line
+        arguments, network connections per process, execution frequency, user
+        context, and detects potential masquerading via Levenshtein distance
+        comparison against known Windows executables.
+      </div>
+
       <div className="process-stats">
         <div className="stat-card">
-          <span className="stat-value">{processEvents.length.toLocaleString()}</span>
+          <span className="stat-value">
+            {processEvents.length.toLocaleString()}
+          </span>
           <span className="stat-label">Total Executions</span>
         </div>
         <div className="stat-card">
-          <span className="stat-value">{new Set(processEvents.map(p => getExeName(p.image))).size}</span>
+          <span className="stat-value">
+            {new Set(processEvents.map((p) => getExeName(p.image))).size}
+          </span>
           <span className="stat-label">Unique Processes</span>
         </div>
         <div className="stat-card">
-          <span className="stat-value">{new Set(processEvents.map(p => p.user).filter(Boolean)).size}</span>
+          <span className="stat-value">
+            {new Set(processEvents.map((p) => p.user).filter(Boolean)).size}
+          </span>
           <span className="stat-label">Active Users</span>
         </div>
         <div className="stat-card warning">
@@ -428,6 +539,72 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
           <span className="stat-label">Typosquatting Suspects</span>
         </div>
       </div>
+
+      {/* Process Search */}
+      <ProcessSearch
+        processNames={allProcessNames}
+        onSelectProcess={(name) => setSelectedProcess(name)}
+      />
+
+      {/* Process Creation Timeline */}
+      <ProcessTimeline entries={entries} />
+
+      {/* Network Activity Summary */}
+      {externalDests.length > 0 && (
+        <div
+          style={{
+            padding: "12px 16px",
+            backgroundColor: "rgba(96,165,250,0.06)",
+            border: "1px solid rgba(96,165,250,0.15)",
+            borderRadius: "8px",
+            marginBottom: "16px",
+          }}
+        >
+          <h3 style={{ margin: "0 0 8px", fontSize: "1rem", color: "#60a5fa" }}>
+            🌐 External Network Connections ({externalDests.length}{" "}
+            destinations)
+          </h3>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "6px",
+              maxHeight: "120px",
+              overflowY: "auto",
+            }}
+          >
+            {externalDests.slice(0, 30).map((d) => (
+              <span
+                key={d.ip}
+                style={{
+                  padding: "3px 8px",
+                  backgroundColor: "rgba(96,165,250,0.12)",
+                  borderRadius: "4px",
+                  fontSize: "0.8rem",
+                  color: "#e0e0e0",
+                }}
+                title={`${d.connectionCount} connection(s), ${d.processCount} process(es), ports: ${d.port}`}
+              >
+                {d.ip}
+                <span style={{ color: "#888", marginLeft: 4 }}>
+                  ×{d.connectionCount}
+                </span>
+              </span>
+            ))}
+            {externalDests.length > 30 && (
+              <span
+                style={{
+                  color: "#888",
+                  fontSize: "0.8rem",
+                  alignSelf: "center",
+                }}
+              >
+                +{externalDests.length - 30} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="process-grid">
         {/* Top Executed Processes */}
@@ -445,7 +622,10 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                 tick={{ fontSize: 11 }}
               />
               <Tooltip
-                contentStyle={{ background: '#1a1a2e', border: '1px solid #444' }}
+                contentStyle={{
+                  background: "#1a1a2e",
+                  border: "1px solid #444",
+                }}
               />
               <Bar
                 dataKey="count"
@@ -456,6 +636,37 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
             </BarChart>
           </ResponsiveContainer>
           <p className="hint">Click a bar to view process details</p>
+          {processesWithNetwork.size > 0 && (
+            <div
+              style={{
+                marginTop: 6,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 4,
+              }}
+            >
+              {topProcesses
+                .filter((p) => processesWithNetwork.has(p.name.toLowerCase()))
+                .map((p) => {
+                  const net = processesWithNetwork.get(p.name.toLowerCase())!;
+                  return (
+                    <span
+                      key={p.name}
+                      style={{
+                        fontSize: "0.75rem",
+                        padding: "2px 6px",
+                        borderRadius: 3,
+                        backgroundColor: "rgba(251,191,36,0.12)",
+                        color: "#fbbf24",
+                      }}
+                      title={`${net.connections} connection(s), ${net.dnsQueries} DNS quer(ies)`}
+                    >
+                      🌐 {p.name}
+                    </span>
+                  );
+                })}
+            </div>
+          )}
         </div>
 
         {/* Process Location Distribution */}
@@ -473,14 +684,17 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                 label={({ location, percent }) =>
                   `${location} (${(percent * 100).toFixed(0)}%)`
                 }
-                labelLine={{ stroke: '#666' }}
+                labelLine={{ stroke: "#666" }}
               >
-                {locationDistribution.map((_, index) => (
-                  <Cell key={index} fill={COLORS[index % COLORS.length]} />
+                {locationDistribution.map((item, index) => (
+                  <Cell key={item.location || index} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip
-                contentStyle={{ background: '#1a1a2e', border: '1px solid #444' }}
+                contentStyle={{
+                  background: "#1a1a2e",
+                  border: "1px solid #444",
+                }}
               />
             </PieChart>
           </ResponsiveContainer>
@@ -502,7 +716,10 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
               />
               <YAxis stroke="#999" />
               <Tooltip
-                contentStyle={{ background: '#1a1a2e', border: '1px solid #444' }}
+                contentStyle={{
+                  background: "#1a1a2e",
+                  border: "1px solid #444",
+                }}
               />
               <Bar dataKey="count" fill="#a78bfa" />
             </BarChart>
@@ -521,9 +738,13 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
             </div>
             {parentChildRelationships.map((rel, idx) => (
               <div key={idx} className="relationship-row">
-                <span className="rel-parent" title={rel.parent}>{rel.parent}</span>
+                <span className="rel-parent" title={rel.parent}>
+                  {rel.parent}
+                </span>
                 <span className="rel-arrow">→</span>
-                <span className="rel-child" title={rel.child}>{rel.child}</span>
+                <span className="rel-child" title={rel.child}>
+                  {rel.child}
+                </span>
                 <span className="rel-count">{rel.count.toLocaleString()}</span>
               </div>
             ))}
@@ -538,7 +759,9 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
             <div>
               <h3>🔍 Potential Masquerading Detected</h3>
               <p className="section-desc">
-                Process names similar to legitimate Windows processes (excluding {excludedPaths.length} paths, comparing against {excludedProcesses.length} processes)
+                Process names similar to legitimate Windows processes (excluding{" "}
+                {excludedPaths.length} paths, comparing against{" "}
+                {excludedProcesses.length} processes)
               </p>
             </div>
             <div className="threshold-control">
@@ -551,7 +774,9 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                 min="1"
                 max="5"
                 value={typosquattingThreshold}
-                onChange={(e) => setTyposquattingThreshold(parseInt(e.target.value))}
+                onChange={(e) =>
+                  setTyposquattingThreshold(parseInt(e.target.value))
+                }
                 className="threshold-slider"
               />
               <span className="threshold-hint">
@@ -561,7 +786,7 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                 className="exclusion-editor-btn"
                 onClick={() => setShowExclusionEditor(!showExclusionEditor)}
               >
-                {showExclusionEditor ? 'Hide' : 'Edit'} Exclusions
+                {showExclusionEditor ? "Hide" : "Edit"} Exclusions
               </button>
             </div>
           </div>
@@ -578,17 +803,23 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                     value={newExcludedPath}
                     onChange={(e) => setNewExcludedPath(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && newExcludedPath.trim()) {
-                        setExcludedPaths([...excludedPaths, newExcludedPath.trim()]);
-                        setNewExcludedPath('');
+                      if (e.key === "Enter" && newExcludedPath.trim()) {
+                        setExcludedPaths([
+                          ...excludedPaths,
+                          newExcludedPath.trim(),
+                        ]);
+                        setNewExcludedPath("");
                       }
                     }}
                   />
                   <button
                     onClick={() => {
                       if (newExcludedPath.trim()) {
-                        setExcludedPaths([...excludedPaths, newExcludedPath.trim()]);
-                        setNewExcludedPath('');
+                        setExcludedPaths([
+                          ...excludedPaths,
+                          newExcludedPath.trim(),
+                        ]);
+                        setNewExcludedPath("");
                       }
                     }}
                   >
@@ -601,7 +832,11 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                       <span>{path}</span>
                       <button
                         className="remove-btn"
-                        onClick={() => setExcludedPaths(excludedPaths.filter((_, i) => i !== idx))}
+                        onClick={() =>
+                          setExcludedPaths(
+                            excludedPaths.filter((_, i) => i !== idx),
+                          )
+                        }
                         title="Remove"
                       >
                         ×
@@ -612,7 +847,10 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
               </div>
 
               <div className="exclusion-section">
-                <h4>Legitimate Processes to Compare Against ({excludedProcesses.length})</h4>
+                <h4>
+                  Legitimate Processes to Compare Against (
+                  {excludedProcesses.length})
+                </h4>
                 <div className="exclusion-add">
                   <input
                     type="text"
@@ -620,17 +858,23 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                     value={newExcludedProcess}
                     onChange={(e) => setNewExcludedProcess(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && newExcludedProcess.trim()) {
-                        setExcludedProcesses([...excludedProcesses, newExcludedProcess.trim().toLowerCase()]);
-                        setNewExcludedProcess('');
+                      if (e.key === "Enter" && newExcludedProcess.trim()) {
+                        setExcludedProcesses([
+                          ...excludedProcesses,
+                          newExcludedProcess.trim().toLowerCase(),
+                        ]);
+                        setNewExcludedProcess("");
                       }
                     }}
                   />
                   <button
                     onClick={() => {
                       if (newExcludedProcess.trim()) {
-                        setExcludedProcesses([...excludedProcesses, newExcludedProcess.trim().toLowerCase()]);
-                        setNewExcludedProcess('');
+                        setExcludedProcesses([
+                          ...excludedProcesses,
+                          newExcludedProcess.trim().toLowerCase(),
+                        ]);
+                        setNewExcludedProcess("");
                       }
                     }}
                   >
@@ -643,7 +887,11 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                       <span>{proc}</span>
                       <button
                         className="remove-btn"
-                        onClick={() => setExcludedProcesses(excludedProcesses.filter((_, i) => i !== idx))}
+                        onClick={() =>
+                          setExcludedProcesses(
+                            excludedProcesses.filter((_, i) => i !== idx),
+                          )
+                        }
                         title="Remove from comparison list"
                       >
                         ×
@@ -670,7 +918,9 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
             {typosquattingMatches.map((match, idx) => (
               <div key={idx} className="typosquatting-item">
                 <div className="typosquatting-header">
-                  <span className="typosquatting-name">{match.processName}</span>
+                  <span className="typosquatting-name">
+                    {match.processName}
+                  </span>
                   <span className="typosquatting-badge">
                     Distance: {match.distance} from "{match.legitimateMatch}"
                   </span>
@@ -678,15 +928,22 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                 <div className="typosquatting-path">{match.fullPath}</div>
                 <div className="typosquatting-meta">
                   <span>Executions: {match.occurrences.length}</span>
-                  <span>First seen: {match.occurrences[0].timestamp.toLocaleString()}</span>
+                  <span>
+                    First seen:{" "}
+                    {match.occurrences[0].timestamp.toLocaleString()}
+                  </span>
                   {match.occurrences[0].user && (
                     <span>User: {match.occurrences[0].user}</span>
                   )}
                 </div>
                 {match.occurrences[0].commandLine && (
-                  <div className="typosquatting-cmdline" title={match.occurrences[0].commandLine}>
-                    <strong>Command:</strong> {match.occurrences[0].commandLine.substring(0, 120)}
-                    {match.occurrences[0].commandLine.length > 120 ? '...' : ''}
+                  <div
+                    className="typosquatting-cmdline"
+                    title={match.occurrences[0].commandLine}
+                  >
+                    <strong>Command:</strong>{" "}
+                    {match.occurrences[0].commandLine.substring(0, 120)}
+                    {match.occurrences[0].commandLine.length > 120 ? "..." : ""}
                   </div>
                 )}
               </div>
@@ -711,16 +968,23 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                 <div className="suspicious-path">{match.fullPath}</div>
                 <div className="suspicious-meta">
                   <span>Executions: {match.occurrences.length}</span>
-                  <span>First seen: {match.occurrences[0].timestamp.toLocaleString()}</span>
+                  <span>
+                    First seen:{" "}
+                    {match.occurrences[0].timestamp.toLocaleString()}
+                  </span>
                   <span>Parent: {match.parentProcess}</span>
                   {match.occurrences[0].user && (
                     <span>User: {match.occurrences[0].user}</span>
                   )}
                 </div>
                 {match.occurrences[0].commandLine && (
-                  <div className="suspicious-cmdline" title={match.occurrences[0].commandLine}>
-                    <strong>Command:</strong> {match.occurrences[0].commandLine.substring(0, 120)}
-                    {match.occurrences[0].commandLine.length > 120 ? '...' : ''}
+                  <div
+                    className="suspicious-cmdline"
+                    title={match.occurrences[0].commandLine}
+                  >
+                    <strong>Command:</strong>{" "}
+                    {match.occurrences[0].commandLine.substring(0, 120)}
+                    {match.occurrences[0].commandLine.length > 120 ? "..." : ""}
                   </div>
                 )}
               </div>
@@ -734,15 +998,29 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
         <div className="process-details-section">
           <div className="details-header">
             <h3>Details: {selectedProcess}</h3>
-            <button className="close-btn" onClick={() => setSelectedProcess(null)}>×</button>
+            <button
+              className="close-btn"
+              onClick={() => setSelectedProcess(null)}
+            >
+              ×
+            </button>
           </div>
           <div className="details-count">
             {selectedProcessDetails.length} executions
-            {selectedProcessDetails.length === 50 && ' (showing first 50)'}
+            {selectedProcessDetails.length === 50 && " (showing first 50)"}
           </div>
           <div className="details-list">
             {selectedProcessDetails.map((proc, idx) => (
-              <div key={idx} className="detail-item">
+              <div
+                key={idx}
+                className="detail-item"
+                onClick={() => {
+                  if (onPivotToEvent) onPivotToEvent(proc.entry);
+                  else setPivotEntry(proc.entry);
+                }}
+                style={{ cursor: "pointer" }}
+                title="Click to view full event details"
+              >
                 <div className="detail-row">
                   <span className="detail-label">Time:</span>
                   <span>{proc.timestamp.toLocaleString()}</span>
@@ -759,20 +1037,30 @@ export default function ProcessExecutionDashboard({ entries, onBack }: ProcessEx
                 )}
                 <div className="detail-row">
                   <span className="detail-label">Parent:</span>
-                  <span>{proc.parentImage || 'N/A'}</span>
+                  <span>{proc.parentImage || "N/A"}</span>
                 </div>
                 <div className="detail-row">
                   <span className="detail-label">User:</span>
-                  <span>{proc.user || 'N/A'}</span>
+                  <span>{proc.user || "N/A"}</span>
                 </div>
                 <div className="detail-row">
                   <span className="detail-label">Computer:</span>
-                  <span>{proc.computer || 'N/A'}</span>
+                  <span>{proc.computer || "N/A"}</span>
                 </div>
               </div>
             ))}
           </div>
         </div>
+      )}
+
+      {/* Event Details Modal for pivot */}
+      {pivotEntry && (
+        <EventDetailsModal
+          event={pivotEntry}
+          isOpen={true}
+          onClose={() => setPivotEntry(null)}
+          title="Process Event Details"
+        />
       )}
     </div>
   );

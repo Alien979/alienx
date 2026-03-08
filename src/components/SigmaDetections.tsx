@@ -10,6 +10,8 @@ import {
 import FileFilter from "./FileFilter";
 import FileBreakdownStats from "./FileBreakdownStats";
 import { EventDetailsModal } from "./EventDetailsModal";
+import { MitreHeatmap } from "./MitreHeatmap";
+import { MultiFileComparison } from "./MultiFileComparison";
 import "./SigmaDetections.css";
 
 // ============================================================================
@@ -211,6 +213,10 @@ export default function SigmaDetections({
       if (onMatchesUpdateRef.current) {
         onMatchesUpdateRef.current(result);
       }
+    }).catch((err) => {
+      console.error('SIGMA processing failed:', err);
+      setIsLoading(false);
+      setMatches(new Map());
     });
 
     // No cleanup needed - we want analysis to complete
@@ -227,12 +233,14 @@ export default function SigmaDetections({
       high: 0,
       medium: 0,
       low: 0,
-      info: 0,
+      informational: 0,
     };
 
     for (const ruleMatches of matches.values()) {
       if (ruleMatches.length > 0) {
-        const severity = ruleMatches[0].rule.level || "medium";
+        let severity: string = ruleMatches[0].rule.level || "medium";
+        // Normalise legacy 'info' level to 'informational'
+        if (severity === "info") severity = "informational";
         bySeverity[severity as keyof typeof bySeverity] += ruleMatches.length;
       }
     }
@@ -243,6 +251,21 @@ export default function SigmaDetections({
       totalMatches,
       bySeverity,
     };
+  }, [matches]);
+
+  // Collect all MITRE ATT&CK tags for heatmap — one entry per unique rule
+  const allMitreTags = useMemo(() => {
+    const tags: string[] = [];
+    for (const ruleMatches of matches.values()) {
+      if (ruleMatches.length > 0) {
+        const ruleTags = ruleMatches[0].rule.tags;
+        if (ruleTags) {
+          // Each unique rule contributes its tags once (not per-event)
+          tags.push(...ruleTags);
+        }
+      }
+    }
+    return tags;
   }, [matches]);
 
   // Sort rules by severity (critical first)
@@ -435,6 +458,15 @@ export default function SigmaDetections({
                 <span className="stat-label">Low</span>
               </div>
             )}
+            {stats.bySeverity.informational > 0 && (
+              <div className="stat-item info">
+                <span className="stat-icon">🔵</span>
+                <span className="stat-number">
+                  {stats.bySeverity.informational}
+                </span>
+                <span className="stat-label">Informational</span>
+              </div>
+            )}
           </div>
         )}
         {!isLoading && optimizationStats && (
@@ -444,6 +476,20 @@ export default function SigmaDetections({
           </p>
         )}
       </div>
+
+      {/* MITRE ATT&CK Heatmap */}
+      {!isLoading && allMitreTags.length > 0 && (
+        <MitreHeatmap tags={allMitreTags} />
+      )}
+
+      {/* Multi-file Comparison */}
+      {!isLoading && (
+        <MultiFileComparison
+          entries={events}
+          sourceFiles={sourceFiles}
+          matches={matches}
+        />
+      )}
 
       {/* File Breakdown Stats */}
       <FileBreakdownStats entries={events} sourceFiles={sourceFiles} />
@@ -739,21 +785,170 @@ export default function SigmaDetections({
                                 </div>
                                 {allFieldMatches.length > 0 && (
                                   <div className="matched-fields">
-                                    <div className="matched-fields-header">
-                                      Matched Fields:
-                                      <span
-                                        style={{
-                                          fontSize: "0.7rem",
-                                          fontWeight: "normal",
-                                          marginLeft: "0.5rem",
-                                          color: "var(--text-dim)",
-                                        }}
-                                      >
-                                        (Tooltip hover shows only the exact
-                                        values that a condition matched against
-                                        and NOT the entire list)
-                                      </span>
+                                    {/* Why Did This Match? — Comprehensive Detection Breakdown */}
+                                    <div className="why-matched-panel">
+                                      <div className="why-matched-header">
+                                        <span className="why-matched-icon">
+                                          🔍
+                                        </span>
+                                        <span className="why-matched-title">
+                                          Why did this match?
+                                        </span>
+                                      </div>
+
+                                      {/* Rule context */}
+                                      {rule.description && (
+                                        <div className="why-rule-description">
+                                          {rule.description}
+                                        </div>
+                                      )}
+
+                                      <div className="why-matched-body">
+                                        {(() => {
+                                          // Group field matches by selection
+                                          const selGroups = new Map<
+                                            string,
+                                            typeof allFieldMatches
+                                          >();
+                                          for (const fm of allFieldMatches) {
+                                            const arr =
+                                              selGroups.get(fm.selection) || [];
+                                            arr.push(fm);
+                                            selGroups.set(fm.selection, arr);
+                                          }
+                                          return Array.from(
+                                            selGroups.entries(),
+                                          ).map(([sel, fields]) => {
+                                            const isFilter = sel
+                                              .toLowerCase()
+                                              .startsWith("filter");
+                                            // Check if this selection overall matched
+                                            const selMatch = match.selectionMatches?.find(
+                                              (sm) => sm.selection === sel
+                                            );
+                                            const selMatched = selMatch?.matched ?? false;
+
+                                            return (
+                                              <div
+                                                key={sel}
+                                                className={`why-matched-group ${isFilter ? "why-group-filter" : ""} ${selMatched ? "why-group-matched" : "why-group-unmatched"}`}
+                                              >
+                                                <div className="why-matched-sel-label">
+                                                  <span className="why-sel-status">
+                                                    {isFilter
+                                                      ? (selMatched ? "❌" : "✅")
+                                                      : (selMatched ? "✅" : "❌")}
+                                                  </span>
+                                                  {isFilter ? (
+                                                    <span className="why-sel-badge why-sel-filter">
+                                                      FILTER: {sel}
+                                                    </span>
+                                                  ) : (
+                                                    <span className="why-sel-badge why-sel-select">
+                                                      {sel}
+                                                    </span>
+                                                  )}
+                                                  <span className="why-sel-summary">
+                                                    {isFilter
+                                                      ? (selMatched
+                                                          ? "exclusion matched — would normally suppress, but condition logic allowed detection"
+                                                          : "exclusion did not match — detection not suppressed")
+                                                      : (selMatched
+                                                          ? `${fields.filter(f => f.matchedPattern !== undefined).length} of ${fields.length} field(s) triggered`
+                                                          : "selection did not match")}
+                                                  </span>
+                                                </div>
+                                                {fields.map((fm, fi) => {
+                                                  const hasPattern = fm.matchedPattern !== undefined;
+                                                  const modLabel =
+                                                    fm.modifier || "equals";
+                                                  const patternStr =
+                                                    fm.matchedPattern !==
+                                                    undefined
+                                                      ? Array.isArray(
+                                                          fm.matchedPattern,
+                                                        )
+                                                        ? fm.matchedPattern
+                                                            .map(
+                                                              (p) => `"${p}"`,
+                                                            )
+                                                            .join(", ")
+                                                        : `"${fm.matchedPattern}"`
+                                                      : null;
+                                                  const valStr =
+                                                    fm.value === undefined ||
+                                                    fm.value === null
+                                                      ? fm.value === null
+                                                        ? "null"
+                                                        : "not present"
+                                                      : fm.value === ""
+                                                        ? '""'
+                                                        : String(fm.value);
+                                                  return (
+                                                    <div
+                                                      key={fi}
+                                                      className={`why-matched-row ${hasPattern ? "why-row-hit" : "why-row-miss"}`}
+                                                    >
+                                                      <span className="why-row-indicator">
+                                                        {hasPattern ? "●" : "○"}
+                                                      </span>
+                                                      <span className="why-field-name">
+                                                        {fm.field}
+                                                      </span>
+                                                      <span className="why-arrow">
+                                                        =
+                                                      </span>
+                                                      <span
+                                                        className="why-actual-value"
+                                                        title={valStr}
+                                                      >
+                                                        {valStr.length > 100
+                                                          ? valStr.slice(
+                                                              0,
+                                                              100,
+                                                            ) + "…"
+                                                          : valStr}
+                                                      </span>
+                                                      {patternStr && (
+                                                        <span className="why-matched-because">
+                                                          <span className="why-modifier">
+                                                            {modLabel}
+                                                          </span>
+                                                          <span className="why-pattern">
+                                                            {patternStr}
+                                                          </span>
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            );
+                                          });
+                                        })()}
+                                        {rule.detection?.condition &&
+                                          typeof rule.detection.condition ===
+                                            "string" && (
+                                            <div className="why-condition-row">
+                                              <span className="why-condition-label">
+                                                Condition:
+                                              </span>
+                                              <code className="why-condition-code">
+                                                {rule.detection.condition}
+                                              </code>
+                                            </div>
+                                          )}
+                                      </div>
                                     </div>
+
+                                    {/* Collapsed raw field details */}
+                                    <details className="raw-fields-details">
+                                      <summary className="raw-fields-summary">
+                                        Raw Field Details ({allFieldMatches.length} fields)
+                                        <span className="raw-fields-hint">
+                                          Hover selection names for YAML definition
+                                        </span>
+                                      </summary>
                                     {allFieldMatches.map((fm, fmIdx) => (
                                       <div key={fmIdx} className="field-match">
                                         <div className="field-match-header">
@@ -823,6 +1018,7 @@ export default function SigmaDetections({
                                         </div>
                                       </div>
                                     ))}
+                                    </details>
                                   </div>
                                 )}
                               </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { ParsedData } from "../types";
 import SigmaDetections from "./SigmaDetections";
 import { SigmaEngine } from "../lib/sigma";
@@ -35,6 +35,69 @@ export default function Dashboard({
     }
   };
 
+  // Build investigation summary from available data
+  const summary = useMemo(() => {
+    const entries = data.entries;
+    if (entries.length === 0) return null;
+
+    const timestamps = entries
+      .map((e) => new Date(e.timestamp).getTime())
+      .filter((t) => !isNaN(t))
+      .sort((a, b) => a - b);
+    const earliest = timestamps.length > 0 ? new Date(timestamps[0]) : null;
+    const latest =
+      timestamps.length > 0
+        ? new Date(timestamps[timestamps.length - 1])
+        : null;
+
+    const computers = new Set(
+      entries
+        .map((e) => e.computer || e.eventData?.Computer || "")
+        .filter(Boolean),
+    );
+    const eventIds = new Set(entries.map((e) => e.eventId).filter(Boolean));
+    const fileCount = data.sourceFiles?.length ?? 1;
+
+    // Detection breakdown from cached matches
+    const matches = cachedMatches ?? new Map<string, SigmaRuleMatch[]>();
+    const sevCounts: Record<string, number> = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    };
+    let totalDetections = 0;
+    for (const ruleMatches of matches.values()) {
+      if (ruleMatches.length > 0) {
+        const level = ruleMatches[0].rule.level || "low";
+        sevCounts[level] = (sevCounts[level] || 0) + ruleMatches.length;
+        totalDetections += ruleMatches.length;
+      }
+    }
+    const highestSeverity =
+      sevCounts.critical > 0
+        ? "critical"
+        : sevCounts.high > 0
+          ? "high"
+          : sevCounts.medium > 0
+            ? "medium"
+            : sevCounts.low > 0
+              ? "low"
+              : null;
+
+    return {
+      earliest,
+      latest,
+      computers: computers.size,
+      eventIds: eventIds.size,
+      fileCount,
+      totalDetections,
+      ruleCount: matches.size,
+      sevCounts,
+      highestSeverity,
+    };
+  }, [data, cachedMatches]);
+
   return (
     <div className="dashboard">
       <header className="dashboard-header">
@@ -62,6 +125,94 @@ export default function Dashboard({
           </button>
         </div>
       </header>
+
+      {/* Investigation Summary Card */}
+      {isAnalysisComplete && summary && (
+        <div className="investigation-summary">
+          <h3 className="summary-title">Investigation Summary</h3>
+          <p className="summary-text">
+            {summary.fileCount > 1
+              ? `Analysed ${summary.fileCount} EVTX files containing `
+              : "Analysed "}
+            <strong>{data.entries.length.toLocaleString()}</strong> events
+            {summary.earliest && summary.latest && (
+              <>
+                {" "}
+                spanning{" "}
+                <strong>
+                  {summary.earliest.toLocaleDateString()} –{" "}
+                  {summary.latest.toLocaleDateString()}
+                </strong>
+              </>
+            )}
+            {summary.computers > 0 && (
+              <>
+                {" "}
+                across{" "}
+                <strong>
+                  {summary.computers} computer
+                  {summary.computers !== 1 ? "s" : ""}
+                </strong>
+              </>
+            )}
+            .{" "}
+            {summary.totalDetections > 0 ? (
+              <>
+                SIGMA engine matched{" "}
+                <strong>
+                  {summary.totalDetections.toLocaleString()} event
+                  {summary.totalDetections !== 1 ? "s" : ""}
+                </strong>{" "}
+                against{" "}
+                <strong>
+                  {summary.ruleCount} rule
+                  {summary.ruleCount !== 1 ? "s" : ""}
+                </strong>
+                {summary.highestSeverity && (
+                  <>
+                    {" "}
+                    with highest severity{" "}
+                    <span
+                      className={`severity-tag severity-${summary.highestSeverity}`}
+                    >
+                      {summary.highestSeverity}
+                    </span>
+                  </>
+                )}
+                .
+              </>
+            ) : (
+              "No SIGMA detections were triggered."
+            )}
+          </p>
+          <div className="summary-stats">
+            <div className="stat-chip">
+              <span className="stat-value">{summary.eventIds}</span>
+              <span className="stat-label">Event Types</span>
+            </div>
+            <div className="stat-chip">
+              <span className="stat-value">{summary.computers}</span>
+              <span className="stat-label">Computers</span>
+            </div>
+            <div className="stat-chip">
+              <span className="stat-value">{summary.ruleCount}</span>
+              <span className="stat-label">Rules Matched</span>
+            </div>
+            {summary.sevCounts.critical > 0 && (
+              <div className="stat-chip stat-critical">
+                <span className="stat-value">{summary.sevCounts.critical}</span>
+                <span className="stat-label">Critical</span>
+              </div>
+            )}
+            {summary.sevCounts.high > 0 && (
+              <div className="stat-chip stat-high">
+                <span className="stat-value">{summary.sevCounts.high}</span>
+                <span className="stat-label">High</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* SIGMA Threat Detection Section */}
       {data.format === "evtx" && (

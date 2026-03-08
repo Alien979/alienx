@@ -57,7 +57,11 @@
 }
 
 .stat-card.total {
-  background: linear-gradient(135deg, var(--accent-purple-bg), var(--accent-blue-bg));
+  background: linear-gradient(
+    135deg,
+    var(--accent-purple-bg),
+    var(--accent-blue-bg)
+  );
   border-color: var(--accent-purple);
   cursor: default;
 }
@@ -249,6 +253,47 @@
   color: var(--accent-green);
 }
 
+/* Section header actions row */
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Per-category VT scan button */
+.vt-category-btn {
+  padding: 0.4rem 0.75rem;
+  background: var(--accent-purple-bg, rgba(139, 92, 246, 0.15));
+  border: 1px solid var(--accent-purple, #a78bfa);
+  color: var(--accent-purple, #a78bfa);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.vt-category-btn:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.3);
+}
+
+.vt-category-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vt-category-btn.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.vt-category-btn.loading {
+  animation: pulse 1.5s ease-in-out infinite;
+  border-color: var(--accent-yellow, #fbbf24);
+  color: var(--accent-yellow, #fbbf24);
+}
+
 /* IOC List Items */
 .ioc-list {
   max-height: 400px;
@@ -273,7 +318,7 @@
 
 .ioc-value {
   flex: 1;
-  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  font-family: "Monaco", "Menlo", "Courier New", monospace;
   font-size: 0.85rem;
   color: var(--text-secondary);
   word-break: break-all;

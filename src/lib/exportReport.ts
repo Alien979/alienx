@@ -2,6 +2,12 @@
 import { ParsedData } from "../types";
 import { SigmaRuleMatch } from "./sigma/types";
 import { CorrelatedChain, correlateEvents } from "./correlationEngine";
+import { extractIOCsFromEntries } from "./iocExtractor";
+import { getAllCachedVTResults } from "./vtCache";
+import {
+  loadConversation,
+  ConversationMessage,
+} from "./llm/storage/conversations";
 
 export interface ReportOptions {
   includeExecutiveSummary: boolean;
@@ -9,6 +15,7 @@ export interface ReportOptions {
   includeCorrelationChains: boolean;
   includeEventStatistics: boolean;
   includeIOCs: boolean;
+  includeAIFindings: boolean;
   includeTimeline: boolean;
   format: "html" | "markdown" | "json";
 }
@@ -145,10 +152,36 @@ function generateHTMLReport(reportData: ReportData): string {
     @media print {
       body { background: white; color: black; }
       .stat-card, .summary-box, .chain-card { border: 1px solid #ddd; }
+      .theme-toggle { display: none; }
     }
+    /* Light theme overrides */
+    body.light {
+      --bg-primary: #f8f9fa;
+      --bg-secondary: #ffffff;
+      --text-primary: #1a1a2e;
+      --text-muted: #6b7280;
+      --accent-blue: #2563eb;
+      --accent-red: #dc2626;
+      --accent-orange: #ea580c;
+      --accent-yellow: #ca8a04;
+      --accent-green: #16a34a;
+      --accent-purple: #7c3aed;
+    }
+    body.light th, body.light td { border-bottom-color: #e5e7eb; }
+    body.light tr:hover { background: rgba(37,99,235,0.04); }
+    body.light .footer { border-top-color: #e5e7eb; }
+    body.light code { background: #f1f5f9; }
+    .theme-toggle {
+      position: fixed; top: 16px; right: 16px; z-index: 100;
+      background: var(--bg-secondary); border: 1px solid var(--text-muted);
+      color: var(--text-primary); border-radius: 8px; padding: 6px 14px;
+      cursor: pointer; font-size: 0.85rem;
+    }
+    .theme-toggle:hover { opacity: 0.8; }
   </style>
 </head>
 <body>
+  <button class="theme-toggle" onclick="document.body.classList.toggle('light');this.textContent=document.body.classList.contains('light')?'🌙 Dark':'☀️ Light'">☀️ Light</button>
   <div class="container">
     <h1>🔆 ALIENX Analysis Report</h1>
     <div class="meta">
@@ -380,6 +413,90 @@ function generateHTMLReport(reportData: ReportData): string {
     </div>
 `;
     });
+  }
+
+  // IOC Section
+  if (options.includeIOCs) {
+    const iocs = extractIOCsFromEntries(data.entries, [
+      "ip",
+      "domain",
+      "hash",
+      "url",
+    ]);
+    const vtCache = getAllCachedVTResults();
+
+    if (iocs.length > 0) {
+      html += `
+    <h2>Indicators of Compromise (IOCs)</h2>
+    <p>Extracted ${iocs.length} unique IOCs from ${data.entries.length.toLocaleString()} events.</p>
+`;
+
+      const iocTypes = ["ip", "domain", "hash", "url"] as const;
+      for (const type of iocTypes) {
+        const typeIOCs = iocs.filter((i) => i.type === type);
+        if (typeIOCs.length === 0) continue;
+
+        const typeLabels: Record<string, string> = {
+          ip: "IP Addresses",
+          domain: "Domains",
+          hash: "File Hashes",
+          url: "URLs",
+        };
+        html += `
+    <h3>${typeLabels[type]} (${typeIOCs.length})</h3>
+    <table>
+      <thead>
+        <tr><th>Value</th><th>Occurrences</th><th>VT Result</th></tr>
+      </thead>
+      <tbody>
+`;
+
+        for (const ioc of typeIOCs) {
+          const vtKey = `${ioc.type}:${ioc.value}`;
+          const vt = vtCache.get(vtKey);
+          let vtCell =
+            '<span style="color:var(--text-muted);">Not scanned</span>';
+          if (vt) {
+            if (vt.error) {
+              vtCell = `<span style="color:var(--accent-yellow);">${escapeHtml(vt.error)}</span>`;
+            } else if (vt.positives > 0) {
+              vtCell = `<span style="color:var(--accent-red);font-weight:600;">${vt.positives}/${vt.total} detections</span>`;
+            } else {
+              vtCell = `<span style="color:var(--accent-green);">0/${vt.total} clean</span>`;
+            }
+          }
+          html += `<tr><td><code>${escapeHtml(ioc.value)}</code></td><td>${ioc.count}</td><td>${vtCell}</td></tr>\n`;
+        }
+
+        html += `</tbody></table>`;
+      }
+    }
+  }
+
+  // AI Analysis Findings
+  if (options.includeAIFindings) {
+    const conversation = loadConversation();
+    if (conversation && conversation.messages.length > 0) {
+      html += `
+    <h2>AI Analysis Findings</h2>
+    <p>LLM conversation log — Provider: <strong>${escapeHtml(conversation.provider)}</strong>, Model: <strong>${escapeHtml(conversation.model)}</strong></p>
+    <div style="border:1px solid var(--border);border-radius:6px;padding:1rem;margin-top:0.5rem;">
+`;
+      for (const msg of conversation.messages) {
+        const isUser = msg.role === "user";
+        const label = isUser ? "Analyst" : "AI";
+        const bg = isUser ? "rgba(0,150,255,0.08)" : "rgba(0,240,200,0.06)";
+        const ts = msg.timestamp
+          ? new Date(msg.timestamp).toLocaleString()
+          : "";
+        html += `
+      <div style="background:${bg};border-radius:4px;padding:0.6rem 0.8rem;margin-bottom:0.5rem;">
+        <div style="font-weight:600;font-size:0.8rem;color:var(--text-muted);margin-bottom:0.3rem;">${label}${ts ? ` — ${ts}` : ""}</div>
+        <div style="white-space:pre-wrap;font-size:0.85rem;">${escapeHtml(msg.content)}</div>
+      </div>`;
+      }
+      html += `</div>`;
+    }
   }
 
   // Event Statistics
@@ -654,6 +771,86 @@ Found **${chains.length}** chains of related events.
     });
   }
 
+  // IOC Section
+  if (options.includeIOCs) {
+    const iocs = extractIOCsFromEntries(data.entries, [
+      "ip",
+      "domain",
+      "hash",
+      "url",
+    ]);
+    const vtCache = getAllCachedVTResults();
+
+    if (iocs.length > 0) {
+      md += `## Indicators of Compromise (IOCs)
+
+Extracted **${iocs.length}** unique IOCs.
+
+`;
+
+      const iocTypes = ["ip", "domain", "hash", "url"] as const;
+      const typeLabels: Record<string, string> = {
+        ip: "IP Addresses",
+        domain: "Domains",
+        hash: "File Hashes",
+        url: "URLs",
+      };
+
+      for (const type of iocTypes) {
+        const typeIOCs = iocs.filter((i) => i.type === type);
+        if (typeIOCs.length === 0) continue;
+
+        md += `### ${typeLabels[type]} (${typeIOCs.length})
+
+| Value | Occurrences | VT Result |
+|-------|-------------|-----------|
+`;
+
+        for (const ioc of typeIOCs) {
+          const vtKey = `${ioc.type}:${ioc.value}`;
+          const vt = vtCache.get(vtKey);
+          let vtStr = "Not scanned";
+          if (vt) {
+            if (vt.error) vtStr = vt.error;
+            else if (vt.positives > 0)
+              vtStr = `${vt.positives}/${vt.total} detections`;
+            else vtStr = `0/${vt.total} clean`;
+          }
+          const escaped = ioc.value.replace(/\|/g, "\\|");
+          md += `| \`${escaped}\` | ${ioc.count} | ${vtStr} |\n`;
+        }
+
+        md += "\n";
+      }
+    }
+  }
+
+  // AI Analysis Findings
+  if (options.includeAIFindings) {
+    const conversation = loadConversation();
+    if (conversation && conversation.messages.length > 0) {
+      md += `## AI Analysis Findings
+
+**Provider:** ${conversation.provider} | **Model:** ${conversation.model}
+
+`;
+      for (const msg of conversation.messages) {
+        const isUser = msg.role === "user";
+        const label = isUser ? "**Analyst**" : "**AI**";
+        const ts = msg.timestamp
+          ? new Date(msg.timestamp).toLocaleString()
+          : "";
+        md += `${label}${ts ? ` — ${ts}` : ""}\n\n`;
+        // Indent content in blockquote for AI, plain for user
+        if (isUser) {
+          md += `> ${msg.content.replace(/\n/g, "\n> ")}\n\n`;
+        } else {
+          md += `${msg.content}\n\n`;
+        }
+      }
+    }
+  }
+
   md += `---
 
 *Generated by ALIENX - All analysis performed locally*
@@ -740,6 +937,51 @@ function generateJSONReport(reportData: ReportData): string {
       eventIdCounts[id] = (eventIdCounts[id] || 0) + 1;
     });
     report.eventStatistics = { eventIdDistribution: eventIdCounts };
+  }
+
+  if (options.includeIOCs) {
+    const iocs = extractIOCsFromEntries(data.entries, [
+      "ip",
+      "domain",
+      "hash",
+      "url",
+    ]);
+    const vtCache = getAllCachedVTResults();
+
+    report.iocs = iocs.map((ioc) => {
+      const vtKey = `${ioc.type}:${ioc.value}`;
+      const vt = vtCache.get(vtKey);
+      return {
+        type: ioc.type,
+        value: ioc.value,
+        count: ioc.count,
+        sources: ioc.sources,
+        vtResult: vt
+          ? {
+              positives: vt.positives,
+              total: vt.total,
+              error: vt.error || undefined,
+            }
+          : undefined,
+      };
+    });
+  }
+
+  if (options.includeAIFindings) {
+    const conversation = loadConversation();
+    if (conversation && conversation.messages.length > 0) {
+      report.aiFindings = {
+        provider: conversation.provider,
+        model: conversation.model,
+        messages: conversation.messages.map((msg: ConversationMessage) => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp
+            ? new Date(msg.timestamp).toISOString()
+            : undefined,
+        })),
+      };
+    }
   }
 
   return JSON.stringify(report, null, 2);

@@ -1,4 +1,11 @@
-import { useState, useMemo, lazy, Suspense } from "react";
+import {
+  useState,
+  useMemo,
+  lazy,
+  Suspense,
+  useEffect,
+  useCallback,
+} from "react";
 import FileDropZone from "./components/FileDropZone";
 import AnalysisSelector, { AnalysisMode } from "./components/AnalysisSelector";
 import Dashboard from "./components/Dashboard";
@@ -13,7 +20,12 @@ const LazyTimeline = lazy(() => import("./components/Timeline"));
 const LazyRawLogsView = lazy(() => import("./components/RawLogsView"));
 const LazyLLMAnalysis = lazy(() => import("./components/LLMAnalysis"));
 import SessionManager from "./components/SessionManager";
+import BookmarkPanel from "./components/BookmarkPanel";
+import { EventDetailsModal } from "./components/EventDetailsModal";
+import { getBookmarks } from "./lib/eventBookmarks";
 import { ParsedData } from "./types";
+import type { LogEntry } from "./types";
+import { clearVTCache } from "./lib/vtCache";
 import { createSigmaEngine, SigmaEngine } from "./lib/sigma";
 import { SigmaRuleMatch } from "./lib/sigma/types";
 import type { SigmaPlatform } from "./lib/sigma/utils/autoLoadRules";
@@ -49,33 +61,32 @@ function App() {
   const [selectedPlatform, setSelectedPlatform] =
     useState<SigmaPlatform | null>(null);
   const [showSessionManager, setShowSessionManager] = useState(false);
-  const [showOpenSourceAnnouncement, setShowOpenSourceAnnouncement] = useState(
-    () => {
-      // Show popup only once
-      const hasSeenAnnouncement = localStorage.getItem(
-        "hasSeenOpenSourceAnnouncement",
-      );
-      return !hasSeenAnnouncement;
-    },
-  );
+  const [showBookmarkPanel, setShowBookmarkPanel] = useState(false);
+  const [pivotEvent, setPivotEvent] = useState<LogEntry | null>(null);
+  const [bookmarkCount, setBookmarkCount] = useState(() => getBookmarks().length);
 
-  const [showFeaturesAnnouncement, setShowFeaturesAnnouncement] = useState(
-    () => {
-      // Show new features popup only once
-      const hasSeenFeatures = localStorage.getItem("hasSeenFeaturesV1");
-      return !hasSeenFeatures;
-    },
-  );
+  // ── Theme toggle (dark / light) ─────────────────────────────
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    return (localStorage.getItem("alienx-theme") as "dark" | "light") || "dark";
+  });
 
-  const [showIOCPivotAnnouncement, setShowIOCPivotAnnouncement] = useState(
-    () => {
-      // Show IOC Pivot announcement only once
-      const hasSeenIOCPivot = localStorage.getItem(
-        "hasSeenIOCPivotAnnouncement",
-      );
-      return !hasSeenIOCPivot;
-    },
-  );
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("alienx-theme", theme);
+  }, [theme]);
+
+  // Periodically refresh bookmark count (storage events don't fire on same tab)
+  useEffect(() => {
+    const id = setInterval(() => setBookmarkCount(getBookmarks().length), 2000);
+    return () => clearInterval(id);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  }, []);
+
+  // ── Keyboard shortcut help panel ────────────────────────────
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
 
   // Create SIGMA engine instance (persists across renders)
   const sigmaEngine = useMemo(() => {
@@ -86,7 +97,98 @@ function App() {
     });
   }, []);
 
+  // ── Global keyboard shortcuts ────────────────────────────────
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      // Ignore when user is typing in an input / textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      // ? → toggle keyboard shortcut help
+      if (e.key === "?") {
+        e.preventDefault();
+        setShowShortcutsHelp((prev) => !prev);
+        return;
+      }
+
+      // Escape → go back one level (or close modals)
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (showShortcutsHelp) {
+          setShowShortcutsHelp(false);
+          return;
+        }
+        if (currentView === "analysis") handleBackToSelector();
+        else if (currentView === "sigma-platform")
+          handleBackFromPlatformSelector();
+        else if (currentView === "select" && parsedData) handleReset();
+        return;
+      }
+
+      // Ctrl/Cmd+Shift shortcuts
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
+        // L → toggle theme (works from any view)
+        if (e.key.toLowerCase() === "l") {
+          e.preventDefault();
+          toggleTheme();
+          return;
+        }
+
+        // B → toggle bookmark panel (works when data loaded)
+        if (e.key.toLowerCase() === "b" && parsedData) {
+          e.preventDefault();
+          setShowBookmarkPanel((prev) => !prev);
+          return;
+        }
+
+        // Quick navigation shortcuts (only from selector view)
+        if (currentView === "select" && parsedData) {
+          switch (e.key.toLowerCase()) {
+            case "s":
+              e.preventDefault();
+              handleAnalysisSelect("sigma");
+              break;
+            case "d":
+              e.preventDefault();
+              handleAnalysisSelect("dashboards");
+              break;
+            case "t":
+              e.preventDefault();
+              handleAnalysisSelect("timeline");
+              break;
+            case "r":
+              e.preventDefault();
+              handleAnalysisSelect("raw-logs");
+              break;
+            case "i":
+              e.preventDefault();
+              handleAnalysisSelect("ioc-extraction");
+              break;
+            case "e":
+              e.preventDefault();
+              handleAnalysisSelect("event-correlation");
+              break;
+          }
+        }
+      }
+    },
+    [
+      currentView,
+      parsedData,
+      showShortcutsHelp,
+      toggleTheme,
+      sigmaMatches,
+      selectedPlatform,
+    ],
+  );
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
   const handleFileLoaded = (data: ParsedData, name: string) => {
+    clearVTCache(); // Clear stale VT results from previous file
     setParsedData(data);
     setFilename(name);
     setCurrentView("select");
@@ -274,6 +376,7 @@ function App() {
           <LazyProcessExecutionDashboard
             entries={parsedData.entries}
             onBack={handleBackToSelector}
+            onPivotToEvent={(entry) => setPivotEvent(entry)}
           />
         </Suspense>
       </AnalysisErrorBoundary>
@@ -305,6 +408,7 @@ function App() {
             data={parsedData}
             filename={filename}
             onBack={handleBackToSelector}
+            sigmaMatches={sigmaMatches}
           />
         </Suspense>
       </ErrorBoundary>
@@ -354,6 +458,7 @@ function App() {
             data={parsedData}
             filename={filename}
             platform={selectedPlatform}
+            onPivotToEvent={(entry) => setPivotEvent(entry)}
           />
         </Suspense>
       </AnalysisErrorBoundary>
@@ -391,6 +496,47 @@ function App() {
     <div className="app">
       <div className="app-main">{content}</div>
 
+      {/* Theme toggle button */}
+      <button
+        className="theme-toggle-btn"
+        onClick={toggleTheme}
+        title={`Switch to ${theme === "dark" ? "light" : "dark"} mode (Ctrl+Shift+L)`}
+      >
+        {theme === "dark" ? "☀️" : "🌙"}
+      </button>
+
+      {/* Bookmark panel button — visible when data is loaded */}
+      {parsedData && (
+        <button
+          className="theme-toggle-btn"
+          onClick={() => setShowBookmarkPanel(true)}
+          title="View bookmarked events (Ctrl+Shift+B)"
+          style={{ left: 72, position: 'fixed' }}
+        >
+          🔖
+          {bookmarkCount > 0 && (
+            <span style={{
+              position: 'absolute', top: -4, right: -4,
+              background: '#ff4444', color: '#fff',
+              borderRadius: '50%', minWidth: 18, height: 18,
+              fontSize: '0.65rem', fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: '0 4px', lineHeight: 1,
+            }}>{bookmarkCount > 99 ? '99+' : bookmarkCount}</span>
+          )}
+        </button>
+      )}
+
+      {/* Keyboard shortcuts help button */}
+      <button
+        className="theme-toggle-btn"
+        onClick={() => setShowShortcutsHelp(true)}
+        title="Keyboard shortcuts (?)"
+        style={{ left: parsedData ? 120 : 72 }}
+      >
+        ?
+      </button>
+
       {showSessionManager && (
         <SessionManager
           {...sessionContext}
@@ -399,160 +545,97 @@ function App() {
         />
       )}
 
-      {showOpenSourceAnnouncement && (
+      {showBookmarkPanel && parsedData && (
+        <BookmarkPanel
+          entries={parsedData.entries}
+          onClose={() => setShowBookmarkPanel(false)}
+          onPivotToEvent={(entry) => {
+            setShowBookmarkPanel(false);
+            setPivotEvent(entry);
+          }}
+        />
+      )}
+
+      {pivotEvent && (
+        <EventDetailsModal
+          event={pivotEvent}
+          isOpen={true}
+          onClose={() => setPivotEvent(null)}
+          title="Bookmarked Event"
+        />
+      )}
+
+      {/* Keyboard shortcut help modal */}
+      {showShortcutsHelp && (
         <div
           className="feedback-modal-backdrop"
-          onClick={() => {
-            setShowOpenSourceAnnouncement(false);
-            localStorage.setItem("hasSeenOpenSourceAnnouncement", "true");
-          }}
+          onClick={() => setShowShortcutsHelp(false)}
         >
           <div
-            className="feedback-modal opensource-announcement"
+            className="feedback-modal"
             onClick={(e) => e.stopPropagation()}
+            style={{ width: 380 }}
           >
-            <h3>🎉 ALIENX is Now Open Source!</h3>
-            <p>
-              ALIENX is now available as an open-source project on GitHub. We
-              welcome contributions, bug reports, and feature requests from the
-              community!
-            </p>
-            <div className="opensource-features">
-              <div>✨ Free forever</div>
-              <div>🔧 Community-driven</div>
-              <div>🚀 Actively maintained</div>
-            </div>
-            <a
-              href="https://github.com/Koifman/ALIENX"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="opensource-link"
+            <h3 style={{ marginBottom: "0.75rem" }}>⌨️ Keyboard Shortcuts</h3>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "0.85rem",
+              }}
             >
-              View on GitHub →
-            </a>
+              <tbody>
+                {[
+                  ["?", "Toggle this help panel"],
+                  ["Escape", "Go back / close modals"],
+                  ["Ctrl+Shift+L", "Toggle dark / light theme"],
+                  ["Ctrl+Shift+B", "Toggle bookmark panel"],
+                  ["Ctrl+Shift+S", "Open SIGMA detections"],
+                  ["Ctrl+Shift+D", "Open Dashboards"],
+                  ["Ctrl+Shift+T", "Open Timeline"],
+                  ["Ctrl+Shift+R", "Open Raw Logs"],
+                  ["Ctrl+Shift+I", "Open IOC Extraction"],
+                  ["Ctrl+Shift+E", "Open Event Correlation"],
+                ].map(([key, desc]) => (
+                  <tr key={key}>
+                    <td
+                      style={{
+                        padding: "4px 8px 4px 0",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <kbd
+                        style={{
+                          background: "rgba(255,255,255,0.08)",
+                          border: "1px solid rgba(255,255,255,0.2)",
+                          borderRadius: 4,
+                          padding: "2px 6px",
+                          fontFamily: "monospace",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        {key}
+                      </kbd>
+                    </td>
+                    <td style={{ padding: "4px 0", color: "#ccc" }}>{desc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p
+              style={{
+                marginTop: "0.75rem",
+                fontSize: "0.75rem",
+                color: "#888",
+              }}
+            >
+              Navigation shortcuts work from the analysis selector view.
+            </p>
             <button
               className="feedback-close"
-              onClick={() => {
-                setShowOpenSourceAnnouncement(false);
-                localStorage.setItem("hasSeenOpenSourceAnnouncement", "true");
-              }}
+              onClick={() => setShowShortcutsHelp(false)}
             >
-              Got it!
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showFeaturesAnnouncement && (
-        <div
-          className="feedback-modal-backdrop"
-          onClick={() => {
-            setShowFeaturesAnnouncement(false);
-            localStorage.setItem("hasSeenFeaturesV1", "true");
-          }}
-        >
-          <div
-            className="feedback-modal features-announcement"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3>🚀 New Features in ALIENX</h3>
-            <p>
-              We've added powerful new capabilities to help you detect threats
-              more effectively!
-            </p>
-            <div className="features-list">
-              <div className="feature-item">
-                <div className="feature-icon">🎭</div>
-                <div className="feature-content">
-                  <strong>Process Masquerading Detection</strong>
-                  <p>
-                    Levenshtein distance-based detection identifies processes
-                    mimicking legitimate Windows executables with customizable
-                    thresholds
-                  </p>
-                </div>
-              </div>
-              <div className="feature-item">
-                <div className="feature-icon">📁</div>
-                <div className="feature-content">
-                  <strong>Multi-File Upload Support</strong>
-                  <p>
-                    Upload multiple EVTX files simultaneously with merged
-                    analysis, color-coded visualization, and file-based
-                    filtering
-                  </p>
-                </div>
-              </div>
-              <div className="feature-item">
-                <div className="feature-icon">⚡</div>
-                <div className="feature-content">
-                  <strong>Field Indexing Optimization</strong>
-                  <p>
-                    Dramatically faster SIGMA matching with intelligent field
-                    indexing — large event sets now process in seconds
-                  </p>
-                </div>
-              </div>
-            </div>
-            <button
-              className="feedback-close features-close-btn"
-              onClick={() => {
-                setShowFeaturesAnnouncement(false);
-                localStorage.setItem("hasSeenFeaturesV1", "true");
-              }}
-            >
-              Awesome, let's try them!
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showIOCPivotAnnouncement && (
-        <div
-          className="feedback-modal-backdrop"
-          onClick={() => {
-            setShowIOCPivotAnnouncement(false);
-            localStorage.setItem("hasSeenIOCPivotAnnouncement", "true");
-          }}
-        >
-          <div
-            className="feedback-modal features-announcement"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3>🔍 New: IOC Pivot Analysis</h3>
-            <p>Turn your IOC extraction into a powerful investigation hub!</p>
-            <div className="features-list">
-              <div className="feature-item">
-                <div className="feature-icon">🎯</div>
-                <div className="feature-content">
-                  <strong>Cross-Event Search</strong>
-                  <p>
-                    Click "Pivot" on any extracted IOC to search all loaded
-                    events. See every occurrence with file breakdown, event type
-                    grouping, and timeline visualization.
-                  </p>
-                </div>
-              </div>
-              <div className="feature-item">
-                <div className="feature-icon">⚡</div>
-                <div className="feature-content">
-                  <strong>SIGMA Integration</strong>
-                  <p>
-                    Events with SIGMA detections show detailed matched fields,
-                    rule descriptions, and severity levels. Non-SIGMA events
-                    display raw log data for quick analysis.
-                  </p>
-                </div>
-              </div>
-            </div>
-            <button
-              className="feedback-close features-close-btn"
-              onClick={() => {
-                setShowIOCPivotAnnouncement(false);
-                localStorage.setItem("hasSeenIOCPivotAnnouncement", "true");
-              }}
-            >
-              Got it, let me try!
+              Close
             </button>
           </div>
         </div>

@@ -36,42 +36,66 @@ export interface VTDomainReport {
 
 // Rate limiting: VT public API allows 4 requests/minute
 const RATE_LIMIT_DELAY = 15500; // 15.5 seconds between requests
+const MAX_RETRIES = 2;
+const RETRY_DELAY = 20000; // 20 seconds before retry on 429
 let lastRequestTime = 0;
 
-async function rateLimitedFetch(url: string, options: RequestInit): Promise<Response> {
+async function rateLimitedFetch(
+  url: string,
+  options: RequestInit,
+): Promise<Response> {
   const now = Date.now();
   const timeSinceLastRequest = now - lastRequestTime;
 
   if (timeSinceLastRequest < RATE_LIMIT_DELAY) {
-    await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY - timeSinceLastRequest));
+    await new Promise((resolve) =>
+      setTimeout(resolve, RATE_LIMIT_DELAY - timeSinceLastRequest),
+    );
   }
 
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    lastRequestTime = Date.now();
+    const response = await fetch(url, options);
+
+    if (response.status === 429 && attempt < MAX_RETRIES) {
+      // Rate-limited by server — wait and retry
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+      continue;
+    }
+
+    return response;
+  }
+
+  // Shouldn't reach here, but satisfy TS
   lastRequestTime = Date.now();
   return fetch(url, options);
 }
 
 // Lookup file hash (MD5, SHA1, SHA256)
-export async function lookupHash(hash: string, apiKey: string): Promise<VTResponse> {
+export async function lookupHash(
+  hash: string,
+  apiKey: string,
+): Promise<VTResponse> {
   try {
     const response = await rateLimitedFetch(
       `https://www.virustotal.com/api/v3/files/${hash}`,
       {
         headers: {
-          'x-apikey': apiKey
-        }
-      }
+          "x-apikey": apiKey,
+        },
+      },
     );
 
     if (response.status === 404) {
-      return { positives: 0, total: 0, error: 'Not found in VT database' };
+      return { positives: 0, total: 0, error: "Not found in VT database" };
     }
 
     if (response.status === 401) {
-      return { positives: 0, total: 0, error: 'Invalid API key' };
+      return { positives: 0, total: 0, error: "Invalid API key" };
     }
 
     if (response.status === 429) {
-      return { positives: 0, total: 0, error: 'Rate limit exceeded' };
+      return { positives: 0, total: 0, error: "Rate limit exceeded" };
     }
 
     if (!response.ok) {
@@ -82,11 +106,12 @@ export async function lookupHash(hash: string, apiKey: string): Promise<VTRespon
     const stats = data.data?.attributes?.last_analysis_stats;
 
     if (!stats) {
-      return { positives: 0, total: 0, error: 'Invalid response format' };
+      return { positives: 0, total: 0, error: "Invalid response format" };
     }
 
     const positives = stats.malicious + stats.suspicious;
-    const total = stats.malicious + stats.suspicious + stats.undetected + stats.harmless;
+    const total =
+      stats.malicious + stats.suspicious + stats.undetected + stats.harmless;
 
     return {
       positives,
@@ -94,7 +119,7 @@ export async function lookupHash(hash: string, apiKey: string): Promise<VTRespon
       scanDate: data.data?.attributes?.last_analysis_date
         ? new Date(data.data.attributes.last_analysis_date * 1000).toISOString()
         : undefined,
-      permalink: `https://www.virustotal.com/gui/file/${hash}`
+      permalink: `https://www.virustotal.com/gui/file/${hash}`,
     };
   } catch (error) {
     return { positives: 0, total: 0, error: `Network error: ${error}` };
@@ -102,27 +127,30 @@ export async function lookupHash(hash: string, apiKey: string): Promise<VTRespon
 }
 
 // Lookup IP address
-export async function lookupIP(ip: string, apiKey: string): Promise<VTResponse> {
+export async function lookupIP(
+  ip: string,
+  apiKey: string,
+): Promise<VTResponse> {
   try {
     const response = await rateLimitedFetch(
       `https://www.virustotal.com/api/v3/ip_addresses/${ip}`,
       {
         headers: {
-          'x-apikey': apiKey
-        }
-      }
+          "x-apikey": apiKey,
+        },
+      },
     );
 
     if (response.status === 404) {
-      return { positives: 0, total: 0, error: 'Not found in VT database' };
+      return { positives: 0, total: 0, error: "Not found in VT database" };
     }
 
     if (response.status === 401) {
-      return { positives: 0, total: 0, error: 'Invalid API key' };
+      return { positives: 0, total: 0, error: "Invalid API key" };
     }
 
     if (response.status === 429) {
-      return { positives: 0, total: 0, error: 'Rate limit exceeded' };
+      return { positives: 0, total: 0, error: "Rate limit exceeded" };
     }
 
     if (!response.ok) {
@@ -137,12 +165,13 @@ export async function lookupIP(ip: string, apiKey: string): Promise<VTResponse> 
     }
 
     const positives = stats.malicious + stats.suspicious;
-    const total = stats.malicious + stats.suspicious + stats.undetected + stats.harmless;
+    const total =
+      stats.malicious + stats.suspicious + stats.undetected + stats.harmless;
 
     return {
       positives,
       total,
-      permalink: `https://www.virustotal.com/gui/ip-address/${ip}`
+      permalink: `https://www.virustotal.com/gui/ip-address/${ip}`,
     };
   } catch (error) {
     return { positives: 0, total: 0, error: `Network error: ${error}` };
@@ -150,27 +179,30 @@ export async function lookupIP(ip: string, apiKey: string): Promise<VTResponse> 
 }
 
 // Lookup domain
-export async function lookupDomain(domain: string, apiKey: string): Promise<VTResponse> {
+export async function lookupDomain(
+  domain: string,
+  apiKey: string,
+): Promise<VTResponse> {
   try {
     const response = await rateLimitedFetch(
       `https://www.virustotal.com/api/v3/domains/${domain}`,
       {
         headers: {
-          'x-apikey': apiKey
-        }
-      }
+          "x-apikey": apiKey,
+        },
+      },
     );
 
     if (response.status === 404) {
-      return { positives: 0, total: 0, error: 'Not found in VT database' };
+      return { positives: 0, total: 0, error: "Not found in VT database" };
     }
 
     if (response.status === 401) {
-      return { positives: 0, total: 0, error: 'Invalid API key' };
+      return { positives: 0, total: 0, error: "Invalid API key" };
     }
 
     if (response.status === 429) {
-      return { positives: 0, total: 0, error: 'Rate limit exceeded' };
+      return { positives: 0, total: 0, error: "Rate limit exceeded" };
     }
 
     if (!response.ok) {
@@ -185,12 +217,13 @@ export async function lookupDomain(domain: string, apiKey: string): Promise<VTRe
     }
 
     const positives = stats.malicious + stats.suspicious;
-    const total = stats.malicious + stats.suspicious + stats.undetected + stats.harmless;
+    const total =
+      stats.malicious + stats.suspicious + stats.undetected + stats.harmless;
 
     return {
       positives,
       total,
-      permalink: `https://www.virustotal.com/gui/domain/${domain}`
+      permalink: `https://www.virustotal.com/gui/domain/${domain}`,
     };
   } catch (error) {
     return { positives: 0, total: 0, error: `Network error: ${error}` };
@@ -198,30 +231,33 @@ export async function lookupDomain(domain: string, apiKey: string): Promise<VTRe
 }
 
 // Lookup URL
-export async function lookupURL(url: string, apiKey: string): Promise<VTResponse> {
+export async function lookupURL(
+  url: string,
+  apiKey: string,
+): Promise<VTResponse> {
   try {
     // VT uses base64-encoded URL as identifier
-    const urlId = btoa(url).replace(/=/g, '');
+    const urlId = btoa(url).replace(/=/g, "");
 
     const response = await rateLimitedFetch(
       `https://www.virustotal.com/api/v3/urls/${urlId}`,
       {
         headers: {
-          'x-apikey': apiKey
-        }
-      }
+          "x-apikey": apiKey,
+        },
+      },
     );
 
     if (response.status === 404) {
-      return { positives: 0, total: 0, error: 'Not found in VT database' };
+      return { positives: 0, total: 0, error: "Not found in VT database" };
     }
 
     if (response.status === 401) {
-      return { positives: 0, total: 0, error: 'Invalid API key' };
+      return { positives: 0, total: 0, error: "Invalid API key" };
     }
 
     if (response.status === 429) {
-      return { positives: 0, total: 0, error: 'Rate limit exceeded' };
+      return { positives: 0, total: 0, error: "Rate limit exceeded" };
     }
 
     if (!response.ok) {
@@ -236,12 +272,13 @@ export async function lookupURL(url: string, apiKey: string): Promise<VTResponse
     }
 
     const positives = stats.malicious + stats.suspicious;
-    const total = stats.malicious + stats.suspicious + stats.undetected + stats.harmless;
+    const total =
+      stats.malicious + stats.suspicious + stats.undetected + stats.harmless;
 
     return {
       positives,
       total,
-      permalink: `https://www.virustotal.com/gui/url/${urlId}`
+      permalink: `https://www.virustotal.com/gui/url/${urlId}`,
     };
   } catch (error) {
     return { positives: 0, total: 0, error: `Network error: ${error}` };
@@ -250,33 +287,33 @@ export async function lookupURL(url: string, apiKey: string): Promise<VTResponse
 
 // Generic lookup based on IOC type
 export async function lookupIOC(
-  type: 'ip' | 'domain' | 'hash' | 'url',
+  type: "ip" | "domain" | "hash" | "url",
   value: string,
-  apiKey: string
+  apiKey: string,
 ): Promise<VTResponse> {
   switch (type) {
-    case 'ip':
+    case "ip":
       return lookupIP(value, apiKey);
-    case 'domain':
+    case "domain":
       return lookupDomain(value, apiKey);
-    case 'hash':
+    case "hash":
       return lookupHash(value, apiKey);
-    case 'url':
+    case "url":
       return lookupURL(value, apiKey);
     default:
-      return { positives: 0, total: 0, error: 'Unsupported IOC type' };
+      return { positives: 0, total: 0, error: "Unsupported IOC type" };
   }
 }
 
 // Store API key in localStorage
 export function saveAPIKey(key: string): void {
-  localStorage.setItem('vt_api_key', key);
+  localStorage.setItem("vt_api_key", key);
 }
 
 export function getAPIKey(): string | null {
-  return localStorage.getItem('vt_api_key');
+  return localStorage.getItem("vt_api_key");
 }
 
 export function clearAPIKey(): void {
-  localStorage.removeItem('vt_api_key');
+  localStorage.removeItem("vt_api_key");
 }

@@ -1,15 +1,19 @@
-import { LogEntry, ParsedData } from './types';
+import { LogEntry, ParsedData } from "./types";
 
 /**
  * Detect log format by sampling first few lines
  */
-function detectFormat(sample: string): 'evtx' | 'unknown' {
+function detectFormat(sample: string): "evtx" | "unknown" {
   // Check for XML/EVTX format
-  if (sample.trim().startsWith('<?xml') || sample.includes('<Events>') || sample.includes('<Event ')) {
-    return 'evtx';
+  if (
+    sample.trim().startsWith("<?xml") ||
+    sample.includes("<Events>") ||
+    sample.includes("<Event ")
+  ) {
+    return "evtx";
   }
 
-  return 'unknown';
+  return "unknown";
 }
 
 /**
@@ -19,53 +23,62 @@ function detectFormat(sample: string): 'evtx' | 'unknown' {
 function parseEVTXXML(
   content: string,
   onProgress?: (processed: number, total: number) => void,
-  filename?: string
+  filename?: string,
 ): LogEntry[] {
   const entries: LogEntry[] = [];
 
-  console.log(`Starting XML parsing... Content size: ${(content.length / 1024 / 1024).toFixed(2)} MB`);
+  console.log(
+    `Starting XML parsing... Content size: ${(content.length / 1024 / 1024).toFixed(2)} MB`,
+  );
 
   const parser = new DOMParser();
-  const xmlDoc = parser.parseFromString(content, 'text/xml');
+  const xmlDoc = parser.parseFromString(content, "text/xml");
 
   // Check for parsing errors
-  const parserError = xmlDoc.querySelector('parsererror');
+  const parserError = xmlDoc.querySelector("parsererror");
   if (parserError) {
-    const errorText = parserError.textContent || '';
-    console.error('XML parsing error:', errorText);
+    const errorText = parserError.textContent || "";
+    console.error("XML parsing error:", errorText);
 
     // If it's a "Premature end of data" error, the file might be truncated or too large
     // Try to extract what we can parse up to the error
-    if (errorText.includes('Premature end of data') || errorText.includes('premature')) {
-      console.warn('XML appears to be truncated or incomplete. Attempting to extract parseable events...');
+    if (
+      errorText.includes("Premature end of data") ||
+      errorText.includes("premature")
+    ) {
+      console.warn(
+        "XML appears to be truncated or incomplete. Attempting to extract parseable events...",
+      );
 
       // DOMParser may have parsed partial content before the error
       // Try to get Event elements that were successfully parsed
-      const partialEvents = xmlDoc.querySelectorAll('Event');
+      const partialEvents = xmlDoc.querySelectorAll("Event");
       if (partialEvents.length > 0) {
-        console.log(`Recovered ${partialEvents.length} events from partial XML`);
+        console.log(
+          `Recovered ${partialEvents.length} events from partial XML`,
+        );
         // Continue processing with what we have
       } else {
         throw new Error(
           `XML file parsing failed.\n\n` +
-          `File: ${filename || 'unknown'}\n` +
-          `Error: ${errorText}\n\n` +
-          `Recommendations:\n` +
-          `1. Use the binary .evtx file instead of XML export\n` +
-          `2. Split the XML into smaller files\n` +
-          `3. Filter events in Event Viewer before exporting`
+            `File: ${filename || "unknown"}\n` +
+            `Error: ${errorText}\n\n` +
+            `Recommendations:\n` +
+            `1. Use the binary .evtx file instead of XML export\n` +
+            `2. Split the XML into smaller files\n` +
+            `3. Filter events in Event Viewer before exporting`,
         );
       }
     } else {
       throw new Error(
         `XML parsing failed: ${errorText}\n` +
-        `File: ${filename || 'unknown'}\n\n` +
-        `Recommendation: Use binary .evtx file instead of XML export`
+          `File: ${filename || "unknown"}\n\n` +
+          `Recommendation: Use binary .evtx file instead of XML export`,
       );
     }
   }
 
-  const events = xmlDoc.querySelectorAll('Event');
+  const events = xmlDoc.querySelectorAll("Event");
   const totalEvents = events.length;
 
   console.log(`Found ${totalEvents} Event elements in XML`);
@@ -78,38 +91,43 @@ function parseEVTXXML(
   events.forEach((event, index) => {
     try {
       // Extract System data
-      const system = event.querySelector('System');
+      const system = event.querySelector("System");
       if (!system) return;
 
-      const eventIdElem = system.querySelector('EventID');
-      const levelElem = system.querySelector('Level');
-      const timeCreatedElem = system.querySelector('TimeCreated');
-      const computerElem = system.querySelector('Computer');
-      const providerElem = system.querySelector('Provider');
+      const eventIdElem = system.querySelector("EventID");
+      const levelElem = system.querySelector("Level");
+      const timeCreatedElem = system.querySelector("TimeCreated");
+      const computerElem = system.querySelector("Computer");
+      const providerElem = system.querySelector("Provider");
 
       // Extract EventData
-      const eventData = event.querySelector('EventData');
+      const eventData = event.querySelector("EventData");
       const eventDataMap: Record<string, string> = {};
 
       // Try to extract IP address from Data elements
-      let ip = 'N/A';
-      const dataElements = event.querySelectorAll('Data');
+      let ip = "N/A";
+      const dataElements = event.querySelectorAll("Data");
       dataElements.forEach((data) => {
-        const name = data.getAttribute('Name');
-        const value = data.textContent || '';
+        const name = data.getAttribute("Name");
+        const value = data.textContent || "";
         if (!name) return;
 
         // Capture for downstream structured access
         eventDataMap[name] = value;
 
         // Look for common IP field names
-        if (name.includes('IpAddress') || name.includes('IPAddress') || name.includes('SourceAddress') || name.includes('ClientIP')) {
+        if (
+          name.includes("IpAddress") ||
+          name.includes("IPAddress") ||
+          name.includes("SourceAddress") ||
+          name.includes("ClientIP")
+        ) {
           ip = value;
         }
       });
 
       // Extract message or data content
-      let message = '';
+      let message = "";
       if (eventData) {
         const dataTexts: string[] = [];
         for (const [name, value] of Object.entries(eventDataMap)) {
@@ -117,17 +135,22 @@ function parseEVTXXML(
             dataTexts.push(`${name}=${value}`);
           }
         }
-        message = dataTexts.join(', ');
+        message = dataTexts.join(", ");
       }
 
-      const eventId = eventIdElem ? parseInt(eventIdElem.textContent || '0', 10) : 0;
-      const level = levelElem ? levelElem.textContent || 'Information' : 'Information';
+      let eventId = eventIdElem
+        ? parseInt(eventIdElem.textContent || "0", 10)
+        : 0;
+      if (isNaN(eventId)) eventId = 0;
+      const level = levelElem
+        ? levelElem.textContent || "Information"
+        : "Information";
       const levelName = getLevelName(level);
 
       // Parse timestamp with validation
       let timestamp = new Date();
       if (timeCreatedElem) {
-        const systemTime = timeCreatedElem.getAttribute('SystemTime');
+        const systemTime = timeCreatedElem.getAttribute("SystemTime");
         if (systemTime) {
           const parsedDate = new Date(systemTime);
           // Only use parsed date if it's valid
@@ -137,15 +160,27 @@ function parseEVTXXML(
         }
       }
 
-      const computer = computerElem ? computerElem.textContent || 'Unknown' : 'Unknown';
-      const source = providerElem ? providerElem.getAttribute('Name') || 'Unknown' : 'Unknown';
+      const computer = computerElem
+        ? computerElem.textContent || "Unknown"
+        : "Unknown";
+      const source = providerElem
+        ? providerElem.getAttribute("Name") || "Unknown"
+        : "Unknown";
 
       // For EVTX logs, if no IP was found, use the computer name
-      if (ip === 'N/A' && computer !== 'Unknown') {
+      if (ip === "N/A" && computer !== "Unknown") {
         ip = computer;
       }
 
       // Map to LogEntry format
+      let rawLine = "";
+      try {
+        rawLine = new XMLSerializer().serializeToString(event);
+      } catch {
+        // Serialization can fail on malformed nodes — fall back to textContent
+        rawLine = event.textContent || "";
+      }
+
       entries.push({
         timestamp,
         ip,
@@ -153,7 +188,7 @@ function parseEVTXXML(
         path: `Event ${eventId}`,
         statusCode: eventId,
         size: 0,
-        rawLine: new XMLSerializer().serializeToString(event),
+        rawLine,
         eventId,
         level: levelName,
         source,
@@ -185,12 +220,12 @@ function parseEVTXXML(
  */
 function getLevelName(level: string): string {
   const levelMap: Record<string, string> = {
-    '0': 'LogAlways',
-    '1': 'Critical',
-    '2': 'Error',
-    '3': 'Warning',
-    '4': 'Information',
-    '5': 'Verbose',
+    "0": "LogAlways",
+    "1": "Critical",
+    "2": "Error",
+    "3": "Warning",
+    "4": "Information",
+    "5": "Verbose",
   };
   return levelMap[level] || level;
 }
@@ -201,13 +236,13 @@ function getLevelName(level: string): string {
 export function parseLogFile(
   content: string,
   onProgress?: (processed: number, total: number) => void,
-  filename?: string
+  filename?: string,
 ): ParsedData {
   const format = detectFormat(content);
   let entries: LogEntry[] = [];
   let totalLines = 0;
 
-  if (format === 'evtx') {
+  if (format === "evtx") {
     // Parse XML-formatted EVTX
     entries = parseEVTXXML(content, onProgress, filename);
     totalLines = entries.length;
@@ -219,7 +254,7 @@ export function parseLogFile(
 
   return {
     entries,
-    format: entries.length > 0 ? 'evtx' : 'unknown',
+    format: entries.length > 0 ? "evtx" : "unknown",
     totalLines,
     parsedLines: entries.length,
     sourceFiles: filename ? [filename] : undefined,

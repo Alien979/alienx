@@ -1,8 +1,13 @@
-import { useState } from 'react';
-import { ParsedData } from '../types';
-import { SigmaRuleMatch } from '../lib/sigma/types';
-import { generateReport, downloadReport, ReportOptions } from '../lib/exportReport';
-import './ExportReport.css';
+import { useState } from "react";
+import { ParsedData } from "../types";
+import { SigmaRuleMatch } from "../lib/sigma/types";
+import {
+  generateReport,
+  downloadReport,
+  ReportOptions,
+} from "../lib/exportReport";
+import { hasConversation } from "../lib/llm/storage/conversations";
+import "./ExportReport.css";
 
 interface ExportReportProps {
   data: ParsedData;
@@ -17,23 +22,27 @@ export default function ExportReport({
   filename,
   platform,
   sigmaMatches,
-  onClose
+  onClose,
 }: ExportReportProps) {
   const [options, setOptions] = useState<ReportOptions>({
     includeExecutiveSummary: true,
     includeSigmaMatches: true,
     includeCorrelationChains: true,
     includeEventStatistics: true,
-    includeIOCs: false,
+    includeIOCs: true,
+    includeAIFindings: hasConversation(),
     includeTimeline: true,
-    format: 'html'
+    format: "html",
   });
 
   const [generating, setGenerating] = useState(false);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
 
-  const handleOptionChange = (key: keyof ReportOptions, value: boolean | string) => {
-    setOptions(prev => ({ ...prev, [key]: value }));
+  const handleOptionChange = (
+    key: keyof ReportOptions,
+    value: boolean | string,
+  ) => {
+    setOptions((prev) => ({ ...prev, [key]: value }));
     setPreviewContent(null); // Clear preview when options change
   };
 
@@ -48,7 +57,7 @@ export default function ExportReport({
         platform,
         data,
         sigmaMatches,
-        options
+        options,
       });
 
       downloadReport(content, filename, options.format);
@@ -66,7 +75,7 @@ export default function ExportReport({
         platform,
         data,
         sigmaMatches,
-        options: { ...options, format: 'html' }
+        options: { ...options, format: "html" },
       });
 
       setPreviewContent(content);
@@ -78,10 +87,12 @@ export default function ExportReport({
 
   return (
     <div className="export-modal-overlay" onClick={onClose}>
-      <div className="export-modal" onClick={e => e.stopPropagation()}>
+      <div className="export-modal" onClick={(e) => e.stopPropagation()}>
         <div className="export-header">
           <h2>Export Analysis Report</h2>
-          <button className="close-btn" onClick={onClose}>×</button>
+          <button className="close-btn" onClick={onClose}>
+            ×
+          </button>
         </div>
 
         <div className="export-body">
@@ -89,7 +100,9 @@ export default function ExportReport({
           <div className="report-info">
             <div className="info-item">
               <span className="info-label">Events:</span>
-              <span className="info-value">{data.entries.length.toLocaleString()}</span>
+              <span className="info-value">
+                {data.entries.length.toLocaleString()}
+              </span>
             </div>
             <div className="info-item">
               <span className="info-label">SIGMA Matches:</span>
@@ -101,48 +114,60 @@ export default function ExportReport({
           <div className="format-section">
             <h3>Export Format</h3>
             <div className="format-options">
-              <label className={`format-option ${options.format === 'html' ? 'selected' : ''}`}>
+              <label
+                className={`format-option ${options.format === "html" ? "selected" : ""}`}
+              >
                 <input
                   type="radio"
                   name="format"
                   value="html"
-                  checked={options.format === 'html'}
-                  onChange={() => handleOptionChange('format', 'html')}
+                  checked={options.format === "html"}
+                  onChange={() => handleOptionChange("format", "html")}
                 />
                 <div className="format-icon">📄</div>
                 <div className="format-details">
                   <span className="format-name">HTML Report</span>
-                  <span className="format-desc">Interactive, styled report viewable in browser</span>
+                  <span className="format-desc">
+                    Interactive, styled report viewable in browser
+                  </span>
                 </div>
               </label>
 
-              <label className={`format-option ${options.format === 'markdown' ? 'selected' : ''}`}>
+              <label
+                className={`format-option ${options.format === "markdown" ? "selected" : ""}`}
+              >
                 <input
                   type="radio"
                   name="format"
                   value="markdown"
-                  checked={options.format === 'markdown'}
-                  onChange={() => handleOptionChange('format', 'markdown')}
+                  checked={options.format === "markdown"}
+                  onChange={() => handleOptionChange("format", "markdown")}
                 />
                 <div className="format-icon">📝</div>
                 <div className="format-details">
                   <span className="format-name">Markdown</span>
-                  <span className="format-desc">Plain text format for documentation</span>
+                  <span className="format-desc">
+                    Plain text format for documentation
+                  </span>
                 </div>
               </label>
 
-              <label className={`format-option ${options.format === 'json' ? 'selected' : ''}`}>
+              <label
+                className={`format-option ${options.format === "json" ? "selected" : ""}`}
+              >
                 <input
                   type="radio"
                   name="format"
                   value="json"
-                  checked={options.format === 'json'}
-                  onChange={() => handleOptionChange('format', 'json')}
+                  checked={options.format === "json"}
+                  onChange={() => handleOptionChange("format", "json")}
                 />
-                <div className="format-icon">{ }</div>
+                <div className="format-icon">{}</div>
                 <div className="format-details">
                   <span className="format-name">JSON</span>
-                  <span className="format-desc">Structured data for integration</span>
+                  <span className="format-desc">
+                    Structured data for integration
+                  </span>
                 </div>
               </label>
             </div>
@@ -156,11 +181,18 @@ export default function ExportReport({
                 <input
                   type="checkbox"
                   checked={options.includeExecutiveSummary}
-                  onChange={(e) => handleOptionChange('includeExecutiveSummary', e.target.checked)}
+                  onChange={(e) =>
+                    handleOptionChange(
+                      "includeExecutiveSummary",
+                      e.target.checked,
+                    )
+                  }
                 />
                 <div className="option-details">
                   <span className="option-name">Executive Summary</span>
-                  <span className="option-desc">Risk assessment and key findings overview</span>
+                  <span className="option-desc">
+                    Risk assessment and key findings overview
+                  </span>
                 </div>
               </label>
 
@@ -168,11 +200,15 @@ export default function ExportReport({
                 <input
                   type="checkbox"
                   checked={options.includeSigmaMatches}
-                  onChange={(e) => handleOptionChange('includeSigmaMatches', e.target.checked)}
+                  onChange={(e) =>
+                    handleOptionChange("includeSigmaMatches", e.target.checked)
+                  }
                 />
                 <div className="option-details">
                   <span className="option-name">SIGMA Detections</span>
-                  <span className="option-desc">All matched rules with severity and counts</span>
+                  <span className="option-desc">
+                    All matched rules with severity and counts
+                  </span>
                 </div>
               </label>
 
@@ -180,11 +216,18 @@ export default function ExportReport({
                 <input
                   type="checkbox"
                   checked={options.includeCorrelationChains}
-                  onChange={(e) => handleOptionChange('includeCorrelationChains', e.target.checked)}
+                  onChange={(e) =>
+                    handleOptionChange(
+                      "includeCorrelationChains",
+                      e.target.checked,
+                    )
+                  }
                 />
                 <div className="option-details">
                   <span className="option-name">Correlation Chains</span>
-                  <span className="option-desc">Related event sequences and attack patterns</span>
+                  <span className="option-desc">
+                    Related event sequences and attack patterns
+                  </span>
                 </div>
               </label>
 
@@ -192,11 +235,18 @@ export default function ExportReport({
                 <input
                   type="checkbox"
                   checked={options.includeEventStatistics}
-                  onChange={(e) => handleOptionChange('includeEventStatistics', e.target.checked)}
+                  onChange={(e) =>
+                    handleOptionChange(
+                      "includeEventStatistics",
+                      e.target.checked,
+                    )
+                  }
                 />
                 <div className="option-details">
                   <span className="option-name">Event Statistics</span>
-                  <span className="option-desc">Event ID distribution and computer breakdown</span>
+                  <span className="option-desc">
+                    Event ID distribution and computer breakdown
+                  </span>
                 </div>
               </label>
 
@@ -204,11 +254,50 @@ export default function ExportReport({
                 <input
                   type="checkbox"
                   checked={options.includeTimeline}
-                  onChange={(e) => handleOptionChange('includeTimeline', e.target.checked)}
+                  onChange={(e) =>
+                    handleOptionChange("includeTimeline", e.target.checked)
+                  }
                 />
                 <div className="option-details">
                   <span className="option-name">Detection Timeline</span>
-                  <span className="option-desc">Chronological view of SIGMA matches</span>
+                  <span className="option-desc">
+                    Chronological view of SIGMA matches
+                  </span>
+                </div>
+              </label>
+
+              <label className="content-option">
+                <input
+                  type="checkbox"
+                  checked={options.includeIOCs}
+                  onChange={(e) =>
+                    handleOptionChange("includeIOCs", e.target.checked)
+                  }
+                />
+                <div className="option-details">
+                  <span className="option-name">IOC Indicators</span>
+                  <span className="option-desc">
+                    Extracted IPs, domains, hashes, and URLs
+                  </span>
+                </div>
+              </label>
+
+              <label className="content-option">
+                <input
+                  type="checkbox"
+                  checked={options.includeAIFindings}
+                  onChange={(e) =>
+                    handleOptionChange("includeAIFindings", e.target.checked)
+                  }
+                  disabled={!hasConversation()}
+                />
+                <div className="option-details">
+                  <span className="option-name">AI Analysis Findings</span>
+                  <span className="option-desc">
+                    {hasConversation()
+                      ? "LLM conversation log and insights"
+                      : "No AI conversation in this session"}
+                  </span>
                 </div>
               </label>
             </div>
@@ -230,11 +319,21 @@ export default function ExportReport({
         </div>
 
         <div className="export-footer">
-          <button className="preview-btn" onClick={handlePreview} disabled={generating}>
-            {generating ? 'Generating...' : '👁️ Preview'}
+          <button
+            className="preview-btn"
+            onClick={handlePreview}
+            disabled={generating}
+          >
+            {generating ? "Generating..." : "👁️ Preview"}
           </button>
-          <button className="generate-btn" onClick={handleGenerate} disabled={generating}>
-            {generating ? 'Generating...' : `📥 Download ${options.format.toUpperCase()}`}
+          <button
+            className="generate-btn"
+            onClick={handleGenerate}
+            disabled={generating}
+          >
+            {generating
+              ? "Generating..."
+              : `📥 Download ${options.format.toUpperCase()}`}
           </button>
         </div>
       </div>

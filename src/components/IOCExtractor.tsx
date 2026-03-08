@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import { LogEntry } from "../types";
 import {
   lookupIOC,
@@ -7,7 +7,21 @@ import {
   saveAPIKey,
   clearAPIKey,
 } from "../lib/virusTotal";
+import {
+  getAllCachedVTResults,
+  setCachedVTResult,
+  bulkSaveVTResults,
+} from "../lib/vtCache";
 import { SigmaRuleMatch } from "../lib/sigma/types";
+import { isPrivateIP, isNoiseDomain } from "../lib/iocExtractor";
+import {
+  EnrichmentResult,
+  lookupAbuseIPDB,
+  getAbuseIPDBKey,
+  saveAbuseIPDBKey,
+  clearAbuseIPDBKey,
+  exportSTIX,
+} from "../lib/iocEnrichment";
 import { IOCPivotView } from "./IOCPivotView";
 import "./IOCExtractor.css";
 
@@ -190,61 +204,6 @@ const FALSE_POSITIVES: Record<IOCType, string[]> = {
   base64: [],
 };
 
-// Check if an IP address is in a reserved/non-routable range
-function isReservedIP(ip: string): boolean {
-  const parts = ip.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((p) => isNaN(p))) return false;
-
-  const [a, b, c] = parts;
-
-  // 0.0.0.0/8 - "This" network
-  if (a === 0) return true;
-
-  // 10.0.0.0/8 - Private (RFC 1918)
-  if (a === 10) return true;
-
-  // 100.64.0.0/10 - Carrier-grade NAT (RFC 6598)
-  if (a === 100 && b >= 64 && b <= 127) return true;
-
-  // 127.0.0.0/8 - Loopback
-  if (a === 127) return true;
-
-  // 169.254.0.0/16 - Link-local
-  if (a === 169 && b === 254) return true;
-
-  // 172.16.0.0/12 - Private (RFC 1918)
-  if (a === 172 && b >= 16 && b <= 31) return true;
-
-  // 192.0.0.0/24 - IETF Protocol Assignments
-  if (a === 192 && b === 0 && c === 0) return true;
-
-  // 192.0.2.0/24 - TEST-NET-1 (documentation)
-  if (a === 192 && b === 0 && c === 2) return true;
-
-  // 192.88.99.0/24 - 6to4 relay anycast
-  if (a === 192 && b === 88 && c === 99) return true;
-
-  // 192.168.0.0/16 - Private (RFC 1918)
-  if (a === 192 && b === 168) return true;
-
-  // 198.18.0.0/15 - Benchmarking
-  if (a === 198 && (b === 18 || b === 19)) return true;
-
-  // 198.51.100.0/24 - TEST-NET-2 (documentation)
-  if (a === 198 && b === 51 && c === 100) return true;
-
-  // 203.0.113.0/24 - TEST-NET-3 (documentation)
-  if (a === 203 && b === 0 && c === 113) return true;
-
-  // 224.0.0.0/4 - Multicast
-  if (a >= 224 && a <= 239) return true;
-
-  // 240.0.0.0/4 - Reserved for future use
-  if (a >= 240 && a <= 255) return true;
-
-  return false;
-}
-
 // Common benign paths to optionally filter
 const BENIGN_PATHS = [
   "C:\\Windows\\System32",
@@ -276,17 +235,38 @@ export default function IOCExtractor({
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [showBenignPaths, setShowBenignPaths] = useState(false);
+  const [showPrivateIPs, setShowPrivateIPs] = useState(false);
+  const [showNoiseDomains, setShowNoiseDomains] = useState(false);
   const [copiedIOC, setCopiedIOC] = useState<string | null>(null);
 
-  // VirusTotal integration state
+  // VirusTotal integration state — initialise from persistent cache
   const [vtApiKey, setVtApiKey] = useState<string>(getAPIKey() || "");
   const [showVtConfig, setShowVtConfig] = useState(false);
-  const [vtResults, setVtResults] = useState<Map<string, VTResponse>>(
-    new Map(),
+  const [vtResults, setVtResults] = useState<Map<string, VTResponse>>(() =>
+    getAllCachedVTResults(),
   );
   const [vtLookupQueue, setVtLookupQueue] = useState<string[]>([]);
   const [isLookingUp, setIsLookingUp] = useState(false);
+  const [categoryLookingUp, setCategoryLookingUp] = useState<IOCType | null>(
+    null,
+  );
   const hasVtKey = vtApiKey.trim().length > 0;
+
+  // AbuseIPDB enrichment state
+  const [abuseIPDBKey, setAbuseIPDBKey] = useState<string>(
+    getAbuseIPDBKey() || "",
+  );
+  const [abuseKeySaved, setAbuseKeySaved] =
+    useState<boolean>(!!getAbuseIPDBKey());
+  const hasAbuseKey = abuseKeySaved;
+  const [enrichResults, setEnrichResults] = useState<
+    Map<string, EnrichmentResult>
+  >(new Map());
+
+  // Persist VT results to sessionStorage whenever they change
+  useEffect(() => {
+    bulkSaveVTResults(vtResults);
+  }, [vtResults]);
 
   // Pivot functionality state
   const [pivotIOC, setPivotIOC] = useState<ExtractedIOC | null>(null);
@@ -330,22 +310,11 @@ export default function IOCExtractor({
             // Skip false positives
             if (FALSE_POSITIVES[type].includes(match.toLowerCase())) continue;
 
-            // Skip reserved/non-routable IP addresses
-            if (type === "ip" && isReservedIP(match)) continue;
-
             // Skip version strings that look like IPs (e.g., 6.0.0.0, Version 4.0.0.0)
             if (type === "ip" && isVersionString(match, value)) continue;
 
             // Validate file paths to filter out command-line fragments
             if (type === "filepath" && !isValidFilePath(match)) continue;
-
-            // Skip benign paths if filter is enabled
-            if (type === "filepath" && !showBenignPaths) {
-              const isbenign = BENIGN_PATHS.some((bp) =>
-                match.toLowerCase().startsWith(bp.toLowerCase()),
-              );
-              if (isbenign) continue;
-            }
 
             // Validate Base64 strings to reduce false positives
             if (type === "base64" && !isLikelyBase64(match)) continue;
@@ -372,11 +341,57 @@ export default function IOCExtractor({
     }
 
     return Array.from(iocMap.values());
-  }, [entries, showBenignPaths]);
+  }, [entries]);
+
+  // Count hidden items for toggle labels
+  const hiddenCounts = useMemo(() => {
+    let privateIPs = 0;
+    let noiseDomains = 0;
+    let benignPaths = 0;
+    for (const ioc of extractedIOCs) {
+      if (ioc.type === "ip" && isPrivateIP(ioc.value)) privateIPs++;
+      if (ioc.type === "domain" && isNoiseDomain(ioc.value)) noiseDomains++;
+      if (
+        ioc.type === "filepath" &&
+        BENIGN_PATHS.some((bp) =>
+          ioc.value.toLowerCase().startsWith(bp.toLowerCase()),
+        )
+      )
+        benignPaths++;
+    }
+    return { privateIPs, noiseDomains, benignPaths };
+  }, [extractedIOCs]);
 
   // Filter and sort IOCs
   const filteredIOCs = useMemo(() => {
     let result = extractedIOCs.filter((ioc) => selectedTypes.has(ioc.type));
+
+    // Filter private IPs unless toggle is on
+    if (!showPrivateIPs) {
+      result = result.filter(
+        (ioc) => !(ioc.type === "ip" && isPrivateIP(ioc.value)),
+      );
+    }
+
+    // Filter noise domains unless toggle is on
+    if (!showNoiseDomains) {
+      result = result.filter(
+        (ioc) => !(ioc.type === "domain" && isNoiseDomain(ioc.value)),
+      );
+    }
+
+    // Filter benign paths unless toggle is on
+    if (!showBenignPaths) {
+      result = result.filter(
+        (ioc) =>
+          !(
+            ioc.type === "filepath" &&
+            BENIGN_PATHS.some((bp) =>
+              ioc.value.toLowerCase().startsWith(bp.toLowerCase()),
+            )
+          ),
+      );
+    }
 
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -387,7 +402,14 @@ export default function IOCExtractor({
     return result.sort(
       (a, b) => b.count - a.count || a.value.localeCompare(b.value),
     );
-  }, [extractedIOCs, selectedTypes, searchQuery]);
+  }, [
+    extractedIOCs,
+    selectedTypes,
+    searchQuery,
+    showPrivateIPs,
+    showNoiseDomains,
+    showBenignPaths,
+  ]);
 
   // Group IOCs by type for display
   const groupedIOCs = useMemo(() => {
@@ -471,13 +493,18 @@ export default function IOCExtractor({
         value,
         apiKey,
       );
-      setVtResults((prev) => new Map(prev).set(key, result));
+      setVtResults((prev) => {
+        const next = new Map(prev).set(key, result);
+        setCachedVTResult(key, result);
+        return next;
+      });
     },
     [hasVtKey],
   );
 
   // Batch lookup all IOCs on VirusTotal
   const lookupAllIOCs = useCallback(async () => {
+    if (isLookingUp) return; // Prevent concurrent scans
     const apiKey = getAPIKey();
     if (!apiKey || !hasVtKey) {
       alert(
@@ -501,9 +528,16 @@ export default function IOCExtractor({
     setIsLookingUp(true);
     setVtLookupQueue(supportedIOCs.map((ioc) => `${ioc.type}:${ioc.value}`));
 
+    // Snapshot already-completed keys to avoid stale closure reads of vtResults
+    const alreadyDone = new Set<string>();
+    vtResults.forEach((v, k) => {
+      if (!v.error && !v.loading) alreadyDone.add(k);
+    });
+
     for (const ioc of supportedIOCs) {
       const key = `${ioc.type}:${ioc.value}`;
-      if (vtResults.has(key) && !vtResults.get(key)?.error) {
+      // Skip already-cached results that aren't errors
+      if (alreadyDone.has(key)) {
         setVtLookupQueue((prev) => prev.filter((k) => k !== key));
         continue;
       }
@@ -516,12 +550,140 @@ export default function IOCExtractor({
         ioc.value,
         apiKey,
       );
-      setVtResults((prev) => new Map(prev).set(key, result));
+      setVtResults((prev) => {
+        const next = new Map(prev).set(key, result);
+        setCachedVTResult(key, result);
+        return next;
+      });
+      // Track this key so subsequent iterations skip it
+      if (!result.error) alreadyDone.add(key);
       setVtLookupQueue((prev) => prev.filter((k) => k !== key));
     }
 
     setIsLookingUp(false);
-  }, [extractedIOCs, vtResults, hasVtKey]);
+  }, [extractedIOCs, vtResults, hasVtKey, isLookingUp]);
+
+  // Lookup all IOCs of a specific category on VirusTotal
+  const lookupCategoryIOCs = useCallback(
+    async (category: IOCType) => {
+      if (isLookingUp) return; // Prevent concurrent scans
+      const apiKey = getAPIKey();
+      if (!apiKey || !hasVtKey) {
+        alert(
+          "VirusTotal API key is required. Please configure your API key first.",
+        );
+        setShowVtConfig(true);
+        return;
+      }
+
+      if (!["ip", "domain", "hash", "url"].includes(category)) {
+        alert(
+          `VirusTotal lookup is not supported for ${IOC_INFO[category].label}.`,
+        );
+        return;
+      }
+
+      const categoryIOCs = extractedIOCs.filter((ioc) => ioc.type === category);
+      if (categoryIOCs.length === 0) return;
+
+      setCategoryLookingUp(category);
+      setIsLookingUp(true);
+      setVtLookupQueue(categoryIOCs.map((ioc) => `${ioc.type}:${ioc.value}`));
+
+      // Snapshot already-completed keys to avoid stale closure reads of vtResults
+      const alreadyDone = new Set<string>();
+      vtResults.forEach((v, k) => {
+        if (!v.error && !v.loading) alreadyDone.add(k);
+      });
+
+      for (const ioc of categoryIOCs) {
+        const key = `${ioc.type}:${ioc.value}`;
+        // Skip already-cached results that aren't errors
+        if (alreadyDone.has(key)) {
+          setVtLookupQueue((prev) => prev.filter((k) => k !== key));
+          continue;
+        }
+
+        setVtResults((prev) =>
+          new Map(prev).set(key, { positives: 0, total: 0, loading: true }),
+        );
+        const result = await lookupIOC(
+          ioc.type as "ip" | "domain" | "hash" | "url",
+          ioc.value,
+          apiKey,
+        );
+        setVtResults((prev) => {
+          const next = new Map(prev).set(key, result);
+          setCachedVTResult(key, result);
+          return next;
+        });
+        // Track this key so subsequent iterations skip it
+        if (!result.error) alreadyDone.add(key);
+        setVtLookupQueue((prev) => prev.filter((k) => k !== key));
+      }
+
+      setCategoryLookingUp(null);
+      setIsLookingUp(false);
+    },
+    [extractedIOCs, vtResults, hasVtKey, isLookingUp],
+  );
+
+  // ===== AbuseIPDB Enrichment =====
+  const lookupAbuseIPDBSingle = useCallback(async (ip: string) => {
+    const key = getAbuseIPDBKey();
+    if (!key) {
+      alert(
+        "AbuseIPDB API key is required. Please save your key in the config panel first.",
+      );
+      return;
+    }
+    const rk = `abuseipdb:${ip}`;
+    setEnrichResults((prev) =>
+      new Map(prev).set(rk, {
+        source: "abuseipdb",
+        malicious: false,
+        score: 0,
+        detail: "",
+        loading: true,
+      }),
+    );
+    try {
+      const result = await lookupAbuseIPDB(ip, key);
+      setEnrichResults((prev) => new Map(prev).set(rk, result));
+    } catch (err) {
+      console.error('AbuseIPDB lookup failed:', err);
+      setEnrichResults((prev) =>
+        new Map(prev).set(rk, {
+          source: 'abuseipdb' as const,
+          malicious: false,
+          score: 0,
+          detail: '',
+          error: 'Network error',
+        }),
+      );
+    }
+  }, []);
+
+  // ===== STIX Export =====
+  const exportSTIXBundle = useCallback(() => {
+    const stixIOCs = filteredIOCs
+      .filter((ioc) =>
+        ["ip", "domain", "url", "hash", "email"].includes(ioc.type),
+      )
+      .map((ioc) => ({ type: ioc.type, value: ioc.value, count: ioc.count }));
+    if (stixIOCs.length === 0) {
+      alert("No IOCs of exportable type (IP, domain, URL, hash, email) found.");
+      return;
+    }
+    const json = exportSTIX(stixIOCs);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "alienx_iocs.stix.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [filteredIOCs]);
 
   // Toggle IOC type filter
   const toggleType = useCallback((type: IOCType) => {
@@ -649,6 +811,39 @@ export default function IOCExtractor({
             onChange={(e) => setShowBenignPaths(e.target.checked)}
           />
           Show benign system paths
+          {!showBenignPaths && hiddenCounts.benignPaths > 0 && (
+            <span style={{ color: "#888", fontSize: "0.8rem", marginLeft: 4 }}>
+              ({hiddenCounts.benignPaths} hidden)
+            </span>
+          )}
+        </label>
+
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={showPrivateIPs}
+            onChange={(e) => setShowPrivateIPs(e.target.checked)}
+          />
+          Show private/reserved IPs
+          {!showPrivateIPs && hiddenCounts.privateIPs > 0 && (
+            <span style={{ color: "#888", fontSize: "0.8rem", marginLeft: 4 }}>
+              ({hiddenCounts.privateIPs} hidden)
+            </span>
+          )}
+        </label>
+
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={showNoiseDomains}
+            onChange={(e) => setShowNoiseDomains(e.target.checked)}
+          />
+          Show noise domains
+          {!showNoiseDomains && hiddenCounts.noiseDomains > 0 && (
+            <span style={{ color: "#888", fontSize: "0.8rem", marginLeft: 4 }}>
+              ({hiddenCounts.noiseDomains} hidden)
+            </span>
+          )}
         </label>
 
         <div className="export-buttons">
@@ -657,6 +852,13 @@ export default function IOCExtractor({
           </button>
           <button className="export-btn" onClick={exportCSV}>
             📊 Export CSV
+          </button>
+          <button
+            className="export-btn"
+            onClick={exportSTIXBundle}
+            title="Export as STIX 2.1 bundle (compatible with MISP, TheHive, OpenCTI)"
+          >
+            🔗 Export STIX
           </button>
         </div>
 
@@ -731,6 +933,76 @@ export default function IOCExtractor({
             🔒 Your API key is stored locally in your browser and never sent
             anywhere except VirusTotal.
           </p>
+          {/* AbuseIPDB configuration — inline */}
+          <div
+            style={{
+              marginTop: "0.75rem",
+              borderTop: "1px solid var(--border-primary)",
+              paddingTop: "0.75rem",
+            }}
+          >
+            <h4
+              style={{
+                margin: "0 0 0.25rem",
+                fontSize: "0.9rem",
+                color: "#60a5fa",
+              }}
+            >
+              AbuseIPDB (IP Reputation)
+            </h4>
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "#888",
+                margin: "0 0 0.5rem",
+              }}
+            >
+              Free API key from{" "}
+              <a
+                href="https://www.abuseipdb.com/account/api"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                abuseipdb.com
+              </a>
+            </p>
+            <div className="vt-config-form">
+              <input
+                type="password"
+                placeholder="Enter AbuseIPDB API key..."
+                value={abuseIPDBKey}
+                onChange={(e) => {
+                  setAbuseIPDBKey(e.target.value);
+                  setAbuseKeySaved(false);
+                }}
+                className="vt-api-input"
+              />
+              <button
+                className="vt-save-btn"
+                onClick={() => {
+                  if (abuseIPDBKey.trim()) {
+                    saveAbuseIPDBKey(abuseIPDBKey.trim());
+                    setAbuseKeySaved(true);
+                  }
+                }}
+                disabled={!abuseIPDBKey.trim()}
+              >
+                {abuseKeySaved ? "✓ Saved" : "Save"}
+              </button>
+              {abuseKeySaved && (
+                <button
+                  className="vt-clear-btn"
+                  onClick={() => {
+                    clearAbuseIPDBKey();
+                    setAbuseIPDBKey("");
+                    setAbuseKeySaved(false);
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -747,108 +1019,203 @@ export default function IOCExtractor({
                     {IOC_INFO[type].icon} {IOC_INFO[type].label}
                     <span className="section-count">({iocs.length})</span>
                   </h3>
-                  <button
-                    className={`copy-all-btn ${copiedIOC === `all-${type}` ? "copied" : ""}`}
-                    onClick={() => copyAllOfType(type)}
-                  >
-                    {copiedIOC === `all-${type}` ? "✓ Copied!" : "📋 Copy All"}
-                  </button>
+                  <div className="section-header-actions">
+                    {/* Per-category VT scan button */}
+                    {["ip", "domain", "hash", "url"].includes(type) && (
+                      <button
+                        className={`vt-category-btn ${
+                          categoryLookingUp === type ? "loading" : ""
+                        } ${!hasVtKey ? "disabled" : ""}`}
+                        onClick={() => lookupCategoryIOCs(type)}
+                        disabled={isLookingUp || !hasVtKey}
+                        title={
+                          hasVtKey
+                            ? `Scan all ${IOC_INFO[type].label.toLowerCase()} on VirusTotal`
+                            : "VirusTotal API key required"
+                        }
+                      >
+                        {categoryLookingUp === type
+                          ? `Scanning (${vtLookupQueue.length})...`
+                          : `🔍 VT Scan All ${IOC_INFO[type].label}`}
+                      </button>
+                    )}
+                    <button
+                      className={`copy-all-btn ${copiedIOC === `all-${type}` ? "copied" : ""}`}
+                      onClick={() => copyAllOfType(type)}
+                    >
+                      {copiedIOC === `all-${type}`
+                        ? "✓ Copied!"
+                        : "📋 Copy All"}
+                    </button>
+                  </div>
                 </div>
                 <p className="section-description">
                   {IOC_INFO[type].description}
                 </p>
                 <div className="ioc-list">
-                  {iocs.slice(0, iocVisiblePerType[type] || IOC_PAGE_SIZE).map((ioc, idx) => {
-                    const vtKey = `${ioc.type}:${ioc.value}`;
-                    const vtResult = vtResults.get(vtKey);
-                    const isVtSupported = [
-                      "ip",
-                      "domain",
-                      "hash",
-                      "url",
-                    ].includes(ioc.type);
+                  {iocs
+                    .slice(0, iocVisiblePerType[type] || IOC_PAGE_SIZE)
+                    .map((ioc, idx) => {
+                      const vtKey = `${ioc.type}:${ioc.value}`;
+                      const vtResult = vtResults.get(vtKey);
+                      const isVtSupported = [
+                        "ip",
+                        "domain",
+                        "hash",
+                        "url",
+                      ].includes(ioc.type);
 
-                    return (
-                      <div key={idx} className="ioc-item">
-                        <span className="ioc-value" title={ioc.value} style={{ wordBreak: 'break-all' as const }}>
-                          {ioc.value}
-                        </span>
-                        <span
-                          className="ioc-count"
-                          title={`Found ${ioc.count} times`}
-                        >
-                          ×{ioc.count}
-                        </span>
-
-                        {/* VirusTotal result indicator */}
-                        {isVtSupported && vtResult && (
+                      return (
+                        <div key={idx} className="ioc-item">
                           <span
-                            className={`vt-result ${vtResult.loading ? "loading" : vtResult.error ? "error" : vtResult.positives > 0 ? "detected" : "clean"}`}
-                            title={
-                              vtResult.loading
-                                ? "Looking up..."
-                                : vtResult.error ||
-                                  `${vtResult.positives}/${vtResult.total} detections`
-                            }
+                            className="ioc-value"
+                            title={ioc.value}
+                            style={{ wordBreak: "break-all" as const }}
                           >
-                            {vtResult.loading
-                              ? "⏳"
-                              : vtResult.error
-                                ? "⚠️"
-                                : vtResult.positives > 0
-                                  ? `🚨 ${vtResult.positives}/${vtResult.total}`
-                                  : "✅"}
+                            {ioc.value}
                           </span>
-                        )}
+                          <span
+                            className="ioc-count"
+                            title={`Found ${ioc.count} times`}
+                          >
+                            ×{ioc.count}
+                          </span>
 
-                        {/* VT lookup button for supported types */}
-                        {isVtSupported && !vtResult && (
+                          {/* VirusTotal result indicator */}
+                          {isVtSupported && vtResult && (
+                            <span
+                              className={`vt-result ${vtResult.loading ? "loading" : vtResult.error ? "error" : vtResult.positives > 0 ? "detected" : "clean"}`}
+                              title={
+                                vtResult.loading
+                                  ? "Looking up..."
+                                  : vtResult.error ||
+                                    `${vtResult.positives}/${vtResult.total} detections`
+                              }
+                            >
+                              {vtResult.loading
+                                ? "⏳"
+                                : vtResult.error
+                                  ? "⚠️"
+                                  : vtResult.positives > 0
+                                    ? `🚨 ${vtResult.positives}/${vtResult.total}`
+                                    : "✅"}
+                            </span>
+                          )}
+
+                          {/* VT lookup button for supported types */}
+                          {isVtSupported && !vtResult && (
+                            <button
+                              className={`vt-lookup-btn ${!hasVtKey ? "disabled" : ""}`}
+                              onClick={() =>
+                                lookupSingleIOC(ioc.type, ioc.value)
+                              }
+                              disabled={!hasVtKey}
+                              title={
+                                hasVtKey
+                                  ? "Lookup on VirusTotal"
+                                  : "VirusTotal API key required"
+                              }
+                            >
+                              {hasVtKey ? "VT" : "🔒"}
+                            </button>
+                          )}
+
+                          {/* VT permalink */}
+                          {vtResult?.permalink && (
+                            <a
+                              href={vtResult.permalink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="vt-link"
+                              title="View on VirusTotal"
+                            >
+                              ↗
+                            </a>
+                          )}
+
+                          {/* AbuseIPDB enrichment (IPs only) */}
+                          {ioc.type === "ip" &&
+                            (() => {
+                              const er = enrichResults.get(
+                                `abuseipdb:${ioc.value}`,
+                              );
+                              if (er) {
+                                return (
+                                  <>
+                                    <span
+                                      className={`vt-result ${er.loading ? "loading" : er.error ? "error" : er.malicious ? "detected" : "clean"}`}
+                                      title={
+                                        er.loading
+                                          ? "Looking up..."
+                                          : er.error || er.detail
+                                      }
+                                    >
+                                      {er.loading
+                                        ? "⏳"
+                                        : er.error
+                                          ? "⚠️"
+                                          : er.malicious
+                                            ? `🛑 ${er.score}%`
+                                            : `✅ ${er.score}%`}
+                                      <span
+                                        style={{
+                                          fontSize: "0.55rem",
+                                          marginLeft: 2,
+                                        }}
+                                      >
+                                        AIPDB
+                                      </span>
+                                    </span>
+                                    {!er.loading && !er.error && (
+                                      <a
+                                        href={`https://www.abuseipdb.com/check/${encodeURIComponent(ioc.value)}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="vt-lookup-btn"
+                                        title="View full report on AbuseIPDB"
+                                        style={{
+                                          textDecoration: "none",
+                                          fontSize: "0.7rem",
+                                        }}
+                                      >
+                                        View ↗
+                                      </a>
+                                    )}
+                                  </>
+                                );
+                              }
+                              return hasAbuseKey ? (
+                                <button
+                                  className="vt-lookup-btn"
+                                  onClick={() =>
+                                    lookupAbuseIPDBSingle(ioc.value)
+                                  }
+                                  title="Lookup on AbuseIPDB"
+                                >
+                                  AIPDB
+                                </button>
+                              ) : null;
+                            })()}
+
+                          {/* Pivot button */}
                           <button
-                            className={`vt-lookup-btn ${!hasVtKey ? "disabled" : ""}`}
-                            onClick={() => lookupSingleIOC(ioc.type, ioc.value)}
-                            disabled={!hasVtKey}
-                            title={
-                              hasVtKey
-                                ? "Lookup on VirusTotal"
-                                : "VirusTotal API key required"
-                            }
+                            className="pivot-btn"
+                            onClick={() => setPivotIOC(ioc)}
+                            title={`Search all events for ${ioc.value}`}
                           >
-                            {hasVtKey ? "VT" : "🔒"}
+                            Pivot
                           </button>
-                        )}
 
-                        {/* VT permalink */}
-                        {vtResult?.permalink && (
-                          <a
-                            href={vtResult.permalink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="vt-link"
-                            title="View on VirusTotal"
+                          <button
+                            className={`copy-btn ${copiedIOC === ioc.value ? "copied" : ""}`}
+                            onClick={() => copyIOC(ioc.value)}
+                            title="Copy to clipboard"
                           >
-                            ↗
-                          </a>
-                        )}
-
-                        {/* Pivot button */}
-                        <button
-                          className="pivot-btn"
-                          onClick={() => setPivotIOC(ioc)}
-                          title={`Search all events for ${ioc.value}`}
-                        >
-                          Pivot
-                        </button>
-
-                        <button
-                          className={`copy-btn ${copiedIOC === ioc.value ? "copied" : ""}`}
-                          onClick={() => copyIOC(ioc.value)}
-                          title="Copy to clipboard"
-                        >
-                          {copiedIOC === ioc.value ? "✓" : "📋"}
-                        </button>
-                      </div>
-                    );
-                  })}
+                            {copiedIOC === ioc.value ? "✓" : "📋"}
+                          </button>
+                        </div>
+                      );
+                    })}
                   {iocs.length > (iocVisiblePerType[type] || IOC_PAGE_SIZE) && (
                     <div className="more-iocs">
                       <span>
