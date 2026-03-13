@@ -387,6 +387,7 @@ function App() {
           rulesLoading={rulesLoading}
           ruleLoadProgress={ruleLoadProgress}
           onBack={handleBackToSelector}
+          onOpenRawLogs={() => setAnalysisMode("raw-logs")}
           cachedMatches={sigmaMatches}
           onMatchesUpdate={setSigmaMatches}
         />
@@ -704,6 +705,7 @@ interface SigmaAnalysisViewProps {
   rulesLoading: boolean;
   ruleLoadProgress: { loaded: number; total: number } | null;
   onBack: () => void;
+  onOpenRawLogs: () => void;
   onMatchesUpdate: (matches: Map<string, SigmaRuleMatch[]>) => void;
   cachedMatches: Map<string, SigmaRuleMatch[]>;
 }
@@ -716,6 +718,7 @@ function SigmaAnalysisView({
   rulesLoading: _rulesLoading,
   ruleLoadProgress: _ruleLoadProgress,
   onBack,
+  onOpenRawLogs,
   onMatchesUpdate,
   cachedMatches,
 }: SigmaAnalysisViewProps) {
@@ -725,6 +728,7 @@ function SigmaAnalysisView({
       data={data}
       filename={filename}
       onBack={onBack}
+      onOpenRawLogs={onOpenRawLogs}
       sigmaEngine={sigmaEngine}
       onMatchesUpdate={onMatchesUpdate}
       cachedMatches={cachedMatches}

@@ -10,6 +10,7 @@ interface DashboardProps {
   data: ParsedData;
   filename: string;
   onBack: () => void;
+  onOpenRawLogs?: () => void;
   sigmaEngine?: SigmaEngine;
   cachedMatches?: Map<string, SigmaRuleMatch[]>;
   onMatchesUpdate?: (matches: Map<string, SigmaRuleMatch[]>) => void;
@@ -19,6 +20,7 @@ export default function Dashboard({
   data,
   filename,
   onBack,
+  onOpenRawLogs,
   sigmaEngine,
   cachedMatches,
   onMatchesUpdate,
@@ -241,7 +243,11 @@ export default function Dashboard({
             />
           </div>
           <div className="sigma-section">
-            <YaraDetections events={data.entries} platform={data.platform} />
+            <YaraDetections
+              events={data.entries}
+              platform={data.platform}
+              onOpenRawLogs={onOpenRawLogs}
+            />
           </div>
         </>
       )}

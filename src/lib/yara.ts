@@ -20,6 +20,12 @@ export interface YaraMatchedFile {
   sourceFile: string;
   matchedLiterals: string[];
   eventCount: number;
+  matchedEvents: YaraMatchedEvent[];
+}
+
+export interface YaraMatchedEvent {
+  event: LogEntry;
+  matchedLiterals: string[];
 }
 
 export interface YaraRuleMatch {
@@ -67,6 +73,7 @@ function groupEventsBySourceFile(events: LogEntry[]): Array<{
   sourceFile: string;
   eventCount: number;
   corpus: string;
+  entries: LogEntry[];
 }> {
   const groups = new Map<string, LogEntry[]>();
 
@@ -84,7 +91,25 @@ function groupEventsBySourceFile(events: LogEntry[]): Array<{
     sourceFile,
     eventCount: entries.length,
     corpus: buildCorpus(entries),
+    entries,
   }));
+}
+
+function buildEventCorpus(entry: LogEntry): string {
+  const parts = [
+    entry.rawLine,
+    entry.message,
+    entry.processName,
+    entry.processCmd,
+    entry.source,
+    entry.host,
+    entry.computer,
+    ...(entry.eventData ? Object.values(entry.eventData) : []),
+  ];
+  return parts
+    .filter((value): value is string => Boolean(value))
+    .join("\n")
+    .toLowerCase();
 }
 
 export async function loadBundledYaraRules(
@@ -153,10 +178,31 @@ export async function scanEventsWithYara(
         );
 
         if (matchedLiterals.length >= rule.minMatches) {
+          const matchedEvents: YaraMatchedEvent[] = [];
+          for (const entry of file.entries) {
+            const eventCorpus = buildEventCorpus(entry);
+            if (!eventCorpus) continue;
+
+            const eventMatchedLiterals = matchedLiterals.filter((literal) =>
+              eventCorpus.includes(literal),
+            );
+
+            if (eventMatchedLiterals.length >= rule.minMatches) {
+              matchedEvents.push({
+                event: entry,
+                matchedLiterals: eventMatchedLiterals.slice(0, 8),
+              });
+              if (matchedEvents.length >= 8) {
+                break;
+              }
+            }
+          }
+
           matchedFiles.push({
             sourceFile: file.sourceFile,
             matchedLiterals: matchedLiterals.slice(0, 8),
             eventCount: file.eventCount,
+            matchedEvents,
           });
         }
       }
