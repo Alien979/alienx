@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-13T02:51:58.279Z",
+  "generatedAt": "2026-03-13T04:02:08.003Z",
   "sources": [
     {
       "id": "yara-rules",
@@ -92,7 +92,7 @@
         "name": "Elastic Protections Artifacts",
         "repo": "https://github.com/elastic/protections-artifacts.git",
         "branch": null,
-        "revision": "fdf0a3af1e3db9d15ef8aa1e102bfb11cd48d2bd",
+        "revision": "b989fe2091169de2aeb72872c6673a2a135a6a58",
         "totalFiles": 668,
         "byPlatform": {
           "windows": 385,

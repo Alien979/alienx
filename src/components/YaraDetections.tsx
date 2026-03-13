@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LogEntry, LogPlatform } from "../types";
 import { scanEventsWithYara, YaraRuleMatch, YaraScanStats } from "../lib/yara";
+import { EventDetailsModal } from "./EventDetailsModal";
 import "./SigmaDetections.css";
 
 interface YaraDetectionsProps {
   events: LogEntry[];
   platform: LogPlatform;
+  onOpenRawLogs?: () => void;
 }
 
 export default function YaraDetections({
   events,
   platform,
+  onOpenRawLogs,
 }: YaraDetectionsProps) {
   const [matches, setMatches] = useState<YaraRuleMatch[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -21,6 +24,17 @@ export default function YaraDetections({
     matchesFound: 0,
   });
   const lastProgressUpdateRef = useRef(0);
+  const [selectedEvent, setSelectedEvent] = useState<LogEntry | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalTitle, setModalTitle] = useState("YARA Matched Event");
+
+  const handleViewEvent = (event: LogEntry, ruleTitle: string) => {
+    const eventId = event.eventId || "N/A";
+    const source = event.source || event.sourceType || "unknown";
+    setModalTitle(`${ruleTitle} - Event ${eventId} - ${source}`);
+    setSelectedEvent(event);
+    setIsModalOpen(true);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -130,6 +144,13 @@ export default function YaraDetections({
             {(stats.processingTimeMs / 1000).toFixed(1)}s
           </p>
         )}
+        {!isLoading && matches.length > 0 && onOpenRawLogs && (
+          <div style={{ marginTop: "0.75rem" }}>
+            <button className="action-button" onClick={onOpenRawLogs}>
+              Go To Raw Logs View
+            </button>
+          </div>
+        )}
       </div>
 
       {!isLoading && matches.length > 0 && (
@@ -169,6 +190,26 @@ export default function YaraDetections({
                       <li key={`${match.rule.id}-${file.sourceFile}`}>
                         {file.sourceFile} • {file.eventCount.toLocaleString()}{" "}
                         events
+                        {file.matchedEvents.length > 0 && (
+                          <div style={{ marginTop: "0.35rem" }}>
+                            {file.matchedEvents.slice(0, 3).map((hit, idx) => (
+                              <button
+                                key={`${match.rule.id}-${file.sourceFile}-evt-${idx}`}
+                                className="action-button"
+                                style={{
+                                  marginRight: "0.35rem",
+                                  marginBottom: "0.3rem",
+                                }}
+                                onClick={() =>
+                                  handleViewEvent(hit.event, match.rule.title)
+                                }
+                              >
+                                View Raw Event (
+                                {hit.matchedLiterals.slice(0, 2).join(", ")})
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -178,6 +219,13 @@ export default function YaraDetections({
           ))}
         </div>
       )}
+
+      <EventDetailsModal
+        event={selectedEvent}
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={modalTitle}
+      />
     </div>
   );
 }
