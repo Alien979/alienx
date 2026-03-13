@@ -98,6 +98,7 @@ export default function AnalysisSelector({
     [data, sigmaMatches],
   );
 
+  const isWindows = data.platform === "windows";
   const isEvtx = data.format === "evtx";
 
   // Check if SIGMA has been analyzed (has any results)
@@ -129,7 +130,11 @@ export default function AnalysisSelector({
             <h1>ALIENX</h1>
             <span className="logo-icon">🔆</span>
           </div>
-          <p className="tagline">Your EVTX companion</p>
+          <p className="tagline">
+            {isWindows
+              ? "Your EVTX companion"
+              : "Your Linux log investigation companion"}
+          </p>
         </div>
         <div className="header-actions">
           <button
@@ -144,7 +149,7 @@ export default function AnalysisSelector({
             </button>
           )}
           <button className="reset-button" onClick={onReset}>
-            ← Upload Different File
+            ← Choose Different Source
           </button>
         </div>
       </div>
@@ -161,7 +166,7 @@ export default function AnalysisSelector({
           <span className="stat">
             <strong>{data.format.toUpperCase()}</strong> format
           </span>
-          {isEvtx && (
+          {isWindows && isEvtx && (
             <span className="stat">
               <strong>
                 {new Set(data.entries.map((e) => e.eventId)).size}
@@ -492,7 +497,7 @@ export default function AnalysisSelector({
         </div>
 
         {/* Process Analysis - only for EVTX */}
-        {isEvtx && (
+        {isWindows && isEvtx && (
           <div
             className={`analysis-card process ${hoveredCard === "process" ? "hovered" : ""}`}
             onClick={() => onSelect("process-analysis")}
@@ -512,7 +517,7 @@ export default function AnalysisSelector({
         )}
 
         {/* Timeline View - only for EVTX with SIGMA */}
-        {isEvtx && (
+        {isWindows && isEvtx && (
           <div
             className={`analysis-card timeline ${hoveredCard === "timeline" ? "hovered" : ""}`}
             onClick={() => onSelect("timeline")}
@@ -532,7 +537,7 @@ export default function AnalysisSelector({
         )}
 
         {/* Event Correlation - only for EVTX */}
-        {isEvtx && (
+        {isWindows && isEvtx && (
           <div
             className={`analysis-card correlation ${hoveredCard === "correlation" ? "hovered" : ""}`}
             onClick={() => onSelect("event-correlation")}
@@ -580,8 +585,11 @@ export default function AnalysisSelector({
           <div className="card-content">
             <h3>Raw Logs Explorer</h3>
             <p>
-              Browse and filter all log entries. Search by timestamp, event ID,
-              computer, source, or message content.
+              Browse and filter all log entries. Search by timestamp,
+              {isWindows
+                ? " event ID, computer, source"
+                : " process, host, source"}
+              , or message content.
             </p>
           </div>
           <div className="card-arrow">→</div>

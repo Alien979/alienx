@@ -1,3 +1,13 @@
+export type LogPlatform = "windows" | "linux";
+
+export type ParsedFormat =
+  | "evtx"
+  | "linux-journal"
+  | "linux-auditd"
+  | "linux-syslog"
+  | "mixed"
+  | "unknown";
+
 export interface LogEntry {
   timestamp: Date;
   ip: string;
@@ -17,21 +27,29 @@ export interface LogEntry {
   eventData?: Record<string, string>;
   // Multi-file support
   sourceFile?: string;
+  // Cross-platform metadata
+  platform?: LogPlatform;
+  host?: string;
+  user?: string;
+  pid?: number;
+  ppid?: number;
+  processName?: string;
+  processCmd?: string;
+  sourceType?: string;
+  facility?: string;
+  severity?: string;
 }
 
 export interface ParsedData {
   entries: LogEntry[];
-  format: 'evtx' | 'unknown';
+  format: ParsedFormat;
+  platform: LogPlatform;
   totalLines: number;
   parsedLines: number;
   sourceFiles?: string[];
 }
 
-export type LLMProvider =
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'ollama';
+export type LLMProvider = "openai" | "anthropic" | "google" | "ollama";
 
 export interface ChartDataPoint {
   time: string;

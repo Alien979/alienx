@@ -1,4 +1,4 @@
-import JSZip from 'jszip';
+import JSZip from "jszip";
 
 /**
  * Checks if a file is a ZIP archive by examining its magic signature
@@ -9,11 +9,21 @@ export async function isZipFile(file: File): Promise<boolean> {
     const buffer = await file.slice(0, 4).arrayBuffer();
     const bytes = new Uint8Array(buffer);
 
-    // Check for ZIP magic signature: PK\x03\x04
-    return bytes[0] === 0x50 && bytes[1] === 0x4B &&
-           bytes[2] === 0x03 && bytes[3] === 0x04;
+    // ZIP signatures seen in the wild:
+    // - PK\x03\x04 (local file header)
+    // - PK\x05\x06 (empty archive end of central directory)
+    // - PK\x07\x08 (spanned/split archive)
+    if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+      return false;
+    }
+
+    return (
+      (bytes[2] === 0x03 && bytes[3] === 0x04) ||
+      (bytes[2] === 0x05 && bytes[3] === 0x06) ||
+      (bytes[2] === 0x07 && bytes[3] === 0x08)
+    );
   } catch (error) {
-    console.error('Error checking ZIP signature:', error);
+    console.error("Error checking ZIP signature:", error);
     return false;
   }
 }
@@ -41,7 +51,7 @@ export interface ZipExtractionResult {
  */
 export async function extractFilesFromZip(
   zipFile: File,
-  maxFileSizeMB: number = 1000
+  maxFileSizeMB: number = 1000,
 ): Promise<ZipExtractionResult> {
   const result: ZipExtractionResult = {
     success: false,
@@ -62,22 +72,24 @@ export async function extractFilesFromZip(
 
       // Only process .evtx and .xml files
       const lowerPath = relativePath.toLowerCase();
-      if (!lowerPath.endsWith('.evtx') && !lowerPath.endsWith('.xml')) {
+      if (!lowerPath.endsWith(".evtx") && !lowerPath.endsWith(".xml")) {
         continue;
       }
 
       // Get the file as a Blob
-      const blob = await zipEntry.async('blob');
+      const blob = await zipEntry.async("blob");
 
       // Check file size
       const fileSizeMB = blob.size / (1024 * 1024);
       if (fileSizeMB > maxFileSizeMB) {
-        console.warn(`Skipping ${relativePath}: too large (${fileSizeMB.toFixed(1)} MB)`);
+        console.warn(
+          `Skipping ${relativePath}: too large (${fileSizeMB.toFixed(1)} MB)`,
+        );
         continue;
       }
 
       // Extract just the filename from the path
-      const fileName = relativePath.split('/').pop() || relativePath;
+      const fileName = relativePath.split("/").pop() || relativePath;
 
       // Create a File object from the Blob
       // Use the full path in the ZIP as part of the source tracking
@@ -91,17 +103,17 @@ export async function extractFilesFromZip(
     }
 
     if (extractedFiles.length === 0) {
-      result.error = 'No EVTX or XML files found in ZIP archive';
+      result.error = "No EVTX or XML files found in ZIP archive";
       return result;
     }
 
     result.success = true;
     result.files = extractedFiles;
     return result;
-
   } catch (error) {
-    result.error = error instanceof Error ? error.message : 'Failed to extract ZIP archive';
-    console.error('ZIP extraction error:', error);
+    result.error =
+      error instanceof Error ? error.message : "Failed to extract ZIP archive";
+    console.error("ZIP extraction error:", error);
     return result;
   }
 }

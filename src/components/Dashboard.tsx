@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { ParsedData } from "../types";
 import SigmaDetections from "./SigmaDetections";
+import YaraDetections from "./YaraDetections";
 import { SigmaEngine } from "../lib/sigma";
 import { SigmaRuleMatch } from "../lib/sigma/types";
 import "./Dashboard.css";
@@ -52,7 +53,7 @@ export default function Dashboard({
 
     const computers = new Set(
       entries
-        .map((e) => e.computer || e.eventData?.Computer || "")
+        .map((e) => e.computer || e.host || e.eventData?.Computer || "")
         .filter(Boolean),
     );
     const eventIds = new Set(entries.map((e) => e.eventId).filter(Boolean));
@@ -106,7 +107,11 @@ export default function Dashboard({
             <h1>ALIENX</h1>
             <span style={{ fontSize: "2rem" }}>🔆</span>
           </div>
-          <p className="tagline">Your EVTX companion</p>
+          <p className="tagline">
+            {data.platform === "windows"
+              ? "Your EVTX companion"
+              : "Your Linux detection companion"}
+          </p>
           <p className="filename">
             {filename} • {data.entries.length.toLocaleString()} events • Format:{" "}
             {data.format.toUpperCase()}
@@ -114,14 +119,23 @@ export default function Dashboard({
         </div>
         <div className="header-buttons">
           <button
-            className={`timeline-button ${!isAnalysisComplete ? "disabled" : ""}`}
-            onClick={isAnalysisComplete ? onBack : undefined}
-            disabled={!isAnalysisComplete}
+            className="timeline-button"
+            onClick={() => {
+              if (!isAnalysisComplete) {
+                if (
+                  window.confirm("Analysis is still running. Leave anyway?")
+                ) {
+                  onBack();
+                }
+              } else {
+                onBack();
+              }
+            }}
             title={
-              !isAnalysisComplete ? "Please wait for analysis to complete" : ""
+              !isAnalysisComplete ? "Analysis in progress – click to leave" : ""
             }
           >
-            {isAnalysisComplete ? "← Back to Selection" : "Analyzing..."}
+            {isAnalysisComplete ? "← Back to Selection" : "⟳ Analyzing..."}
           </button>
         </div>
       </header>
@@ -132,7 +146,7 @@ export default function Dashboard({
           <h3 className="summary-title">Investigation Summary</h3>
           <p className="summary-text">
             {summary.fileCount > 1
-              ? `Analysed ${summary.fileCount} EVTX files containing `
+              ? `Analysed ${summary.fileCount} ${data.platform === "windows" ? "EVTX" : "Linux evidence"} files containing `
               : "Analysed "}
             <strong>{data.entries.length.toLocaleString()}</strong> events
             {summary.earliest && summary.latest && (
@@ -214,17 +228,22 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* SIGMA Threat Detection Section */}
-      {data.format === "evtx" && (
-        <div className="sigma-section">
-          <SigmaDetections
-            events={data.entries}
-            sigmaEngine={sigmaEngine}
-            onMatchesUpdate={handleAnalysisComplete}
-            cachedMatches={cachedMatches}
-            sourceFiles={data.sourceFiles}
-          />
-        </div>
+      {/* Detection Sections */}
+      {data.entries.length > 0 && (
+        <>
+          <div className="sigma-section">
+            <SigmaDetections
+              events={data.entries}
+              sigmaEngine={sigmaEngine}
+              onMatchesUpdate={handleAnalysisComplete}
+              cachedMatches={cachedMatches}
+              sourceFiles={data.sourceFiles}
+            />
+          </div>
+          <div className="sigma-section">
+            <YaraDetections events={data.entries} platform={data.platform} />
+          </div>
+        </>
       )}
     </div>
   );

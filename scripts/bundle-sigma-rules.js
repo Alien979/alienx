@@ -1,8 +1,9 @@
 /**
- * Bundle SIGMA rules by category
+ * Bundle SIGMA rules by category and platform.
  *
- * Creates one JSON file per category in public/sigma-rules/
- * This eliminates the need for import.meta.glob and reduces bundle size
+ * Creates one JSON file per category in:
+ * - public/sigma-rules/windows/
+ * - public/sigma-rules/linux/
  */
 
 import fs from "fs";
@@ -12,12 +13,10 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const RULES_SOURCE = path.join(__dirname, "../src/sigma-master/rules/windows");
-const OUTPUT_DIR = path.join(__dirname, "../public/sigma-rules");
+const PLATFORMS = ["windows", "linux"];
+const RULES_ROOT = path.join(__dirname, "../src/sigma-master/rules");
+const OUTPUT_ROOT = path.join(__dirname, "../public/sigma-rules");
 
-/**
- * Recursively find all .yml/.yaml files without using glob (avoids fd leaks)
- */
 function findYamlFiles(dir) {
   const results = [];
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -32,35 +31,48 @@ function findYamlFiles(dir) {
   return results;
 }
 
-async function bundleRules() {
-  console.log("📦 Bundling SIGMA rules by category...\n");
-
-  // Create output directory
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
+}
 
-  // Get all rule files (using manual recursion instead of glob to avoid fd issues)
-  const ruleFiles = findYamlFiles(RULES_SOURCE);
+function cleanDir(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir)) {
+    fs.rmSync(path.join(dir, entry), { recursive: true, force: true });
+  }
+}
 
-  console.log(`Found ${ruleFiles.length} rule files\n`);
+function bundlePlatform(platform) {
+  const rulesSource = path.join(RULES_ROOT, platform);
+  const outputDir = path.join(OUTPUT_ROOT, platform);
 
-  if (ruleFiles.length === 0) {
+  ensureDir(outputDir);
+  cleanDir(outputDir);
+
+  if (!fs.existsSync(rulesSource)) {
     fs.writeFileSync(
-      path.join(OUTPUT_DIR, "manifest.json"),
+      path.join(outputDir, "manifest.json"),
       JSON.stringify({}, null, 2),
       "utf8",
     );
-    console.log("⚠️  No rule files found. Written empty manifest.");
-    console.log("   Ensure src/sigma-master contains the SigmaHQ rules.\n");
-    return;
+    return { platform, categoryCount: 0, totalRules: 0, totalSize: 0 };
   }
 
-  // Group file paths by category (top-level directory) — don't read content yet
-  const categoryPaths = {};
+  const ruleFiles = findYamlFiles(rulesSource);
+  if (ruleFiles.length === 0) {
+    fs.writeFileSync(
+      path.join(outputDir, "manifest.json"),
+      JSON.stringify({}, null, 2),
+      "utf8",
+    );
+    return { platform, categoryCount: 0, totalRules: 0, totalSize: 0 };
+  }
 
+  const categoryPaths = {};
   for (const filePath of ruleFiles) {
-    const relativePath = path.relative(RULES_SOURCE, filePath);
+    const relativePath = path.relative(rulesSource, filePath);
     const parts = relativePath.split(path.sep);
     const category = parts[0];
 
@@ -70,7 +82,6 @@ async function bundleRules() {
     categoryPaths[category].push({ filePath, relativePath });
   }
 
-  // Process one category at a time: read files → write JSON → free memory
   let totalSize = 0;
   let totalRules = 0;
   const manifest = {};
@@ -83,16 +94,16 @@ async function bundleRules() {
         const content = fs.readFileSync(filePath, "utf8");
         rules.push({ path: relativePath, content });
       } catch (error) {
-        console.warn(`⚠️  Failed to read ${relativePath}: ${error.message}`);
+        console.warn(
+          `[${platform}] Failed to read ${relativePath}: ${error.message}`,
+        );
       }
     }
 
-    // Write category JSON
-    const outputFile = path.join(OUTPUT_DIR, `${category}.json`);
+    const outputFile = path.join(outputDir, `${category}.json`);
     const data = JSON.stringify(rules);
     fs.writeFileSync(outputFile, data, "utf8");
 
-    const sizeKB = (data.length / 1024).toFixed(2);
     totalSize += data.length;
     totalRules += rules.length;
     manifest[category] = {
@@ -102,19 +113,36 @@ async function bundleRules() {
     };
 
     console.log(
-      `✅ ${category.padEnd(25)} ${String(rules.length).padStart(4)} rules → ${sizeKB.padStart(8)} KB`,
+      `✅ [${platform}] ${category.padEnd(25)} ${String(rules.length).padStart(4)} rules`,
     );
   }
 
-  // Write manifest
-  const manifestFile = path.join(OUTPUT_DIR, "manifest.json");
-  fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2), "utf8");
-
-  console.log(`\n📋 Manifest: manifest.json`);
-  console.log(
-    `\n📊 Total: ${Object.keys(categoryPaths).length} categories, ${totalRules} rules, ${(totalSize / 1024 / 1024).toFixed(2)} MB`,
+  fs.writeFileSync(
+    path.join(outputDir, "manifest.json"),
+    JSON.stringify(manifest, null, 2),
+    "utf8",
   );
-  console.log(`✅ Done! Files written to public/sigma-rules/\n`);
+  return {
+    platform,
+    categoryCount: Object.keys(categoryPaths).length,
+    totalRules,
+    totalSize,
+  };
+}
+
+async function bundleRules() {
+  console.log("📦 Bundling SIGMA rules by category and platform...\n");
+  ensureDir(OUTPUT_ROOT);
+
+  const stats = PLATFORMS.map((platform) => bundlePlatform(platform));
+
+  console.log("\n📊 Bundle summary:");
+  for (const stat of stats) {
+    console.log(
+      `- ${stat.platform}: ${stat.categoryCount} categories, ${stat.totalRules} rules, ${(stat.totalSize / 1024 / 1024).toFixed(2)} MB`,
+    );
+  }
+  console.log("✅ Done! Files written to public/sigma-rules/<platform>/\n");
 }
 
 bundleRules().catch((error) => {

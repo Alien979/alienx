@@ -554,6 +554,8 @@ function convertRecordToLogEntry(
       message,
       eventData: Object.keys(eventData).length ? eventData : undefined,
       sourceFile: filename,
+      platform: "windows",
+      sourceType: "evtx-wasm",
     };
   } catch (err) {
     console.error("Failed to convert record to LogEntry:", err);

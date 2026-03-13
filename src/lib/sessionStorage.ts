@@ -171,6 +171,10 @@ export function loadSession(id: string): {
     const data: ParsedData = {
       ...session.data,
       entries,
+      platform:
+        (session.data as ParsedData).platform ||
+        (session.platform as ParsedData["platform"]) ||
+        "windows",
     };
 
     // Convert array back to Map
