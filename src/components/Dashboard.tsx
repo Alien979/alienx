@@ -27,7 +27,7 @@ export default function Dashboard({
 }: DashboardProps) {
   // Track if analysis is complete - disable back button until done
   const [isAnalysisComplete, setIsAnalysisComplete] = useState(
-    cachedMatches ? cachedMatches.size > 0 : false,
+    cachedMatches !== undefined,
   );
 
   // Handle analysis completion

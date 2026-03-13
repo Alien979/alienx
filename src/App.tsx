@@ -5,6 +5,7 @@ import {
   Suspense,
   useEffect,
   useCallback,
+  useRef,
 } from "react";
 import FileDropZone from "./components/FileDropZone";
 import LinuxDropZone from "./components/LinuxDropZone";
@@ -64,6 +65,7 @@ function App() {
   const [sigmaMatches, setSigmaMatches] = useState<
     Map<string, SigmaRuleMatch[]>
   >(new Map());
+  const [sigmaHasRun, setSigmaHasRun] = useState(false);
   const [selectedPlatform, setSelectedPlatform] =
     useState<SigmaPlatform | null>(null);
   const [showSessionManager, setShowSessionManager] = useState(false);
@@ -72,6 +74,7 @@ function App() {
   const [bookmarkCount, setBookmarkCount] = useState(
     () => getBookmarks().length,
   );
+  const ruleLoadRequestIdRef = useRef(0);
 
   // ── Theme toggle (dark / light) ─────────────────────────────
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -196,19 +199,25 @@ function App() {
   }, [handleKeyDown]);
 
   const handleFileLoaded = (data: ParsedData, name: string) => {
+    ruleLoadRequestIdRef.current += 1;
     clearVTCache(); // Clear stale VT results from previous file
     setAnalysisPlatform(data.platform);
     setParsedData(data);
     setFilename(name);
+    setSigmaHasRun(false);
+    setSigmaMatches(new Map());
+    setSelectedPlatform(null);
     setCurrentView("select");
   };
 
   const handleReset = () => {
+    ruleLoadRequestIdRef.current += 1;
     setAnalysisPlatform(null);
     setParsedData(null);
     setFilename("");
     setAnalysisMode(null);
     setSigmaMatches(new Map());
+    setSigmaHasRun(false);
     setSelectedPlatform(null);
     // Clear loaded rules from engine
     sigmaEngine.clearRules();
@@ -226,9 +235,9 @@ function App() {
     }
 
     if (mode === "sigma") {
-      // If we already have cached matches, go directly to analysis
-      // Otherwise show platform selector
-      if (sigmaMatches.size > 0 && selectedPlatform) {
+      // If analysis already ran for current rules/platform, go directly to analysis.
+      // This includes valid zero-match runs.
+      if (sigmaHasRun && selectedPlatform) {
         setAnalysisMode("sigma");
         setCurrentView("analysis");
       } else {
@@ -244,12 +253,14 @@ function App() {
     platform: SigmaPlatform,
     categories: string[],
   ) => {
+    const requestId = ++ruleLoadRequestIdRef.current;
     setSelectedPlatform(platform);
     setRulesLoading(true);
 
     // Clear any previously loaded rules
     sigmaEngine.clearRules();
     setSigmaMatches(new Map());
+    setSigmaHasRun(false);
     setRuleLoadProgress(null);
 
     try {
@@ -258,9 +269,16 @@ function App() {
       const loadResult = await autoLoadRules(
         sigmaEngine,
         platform,
-        (loaded, total) => setRuleLoadProgress({ loaded, total }),
+        (loaded, total) => {
+          if (ruleLoadRequestIdRef.current !== requestId) return;
+          setRuleLoadProgress({ loaded, total });
+        },
         categories,
       );
+
+      if (ruleLoadRequestIdRef.current !== requestId) {
+        return;
+      }
 
       if (loadResult.errors.length > 0) {
         console.warn(
@@ -279,6 +297,9 @@ function App() {
       setAnalysisMode("sigma");
       setCurrentView("analysis");
     } catch (err) {
+      if (ruleLoadRequestIdRef.current !== requestId) {
+        return;
+      }
       console.error("[SIGMA] Rule loading failed:", err);
       setRulesLoading(false);
       setRuleLoadProgress(null);
@@ -292,6 +313,9 @@ function App() {
   };
 
   const handleBackFromPlatformSelector = () => {
+    ruleLoadRequestIdRef.current += 1;
+    setRulesLoading(false);
+    setRuleLoadProgress(null);
     setCurrentView("select");
   };
 
@@ -301,6 +325,7 @@ function App() {
     if (parsedData) {
       // Clear previous matches to force re-analysis
       setSigmaMatches(new Map());
+      setSigmaHasRun(false);
       // Switch to analysis view to trigger SigmaDetections to run analysis
       setAnalysisMode("sigma");
       setCurrentView("analysis");
@@ -319,6 +344,7 @@ function App() {
     setFilename(name);
     setSelectedPlatform(platform as SigmaPlatform | null);
     setSigmaMatches(matches);
+    setSigmaHasRun(true);
     setCurrentView("select");
     // Note: conversation history will be handled by LLMAnalysis when it mounts
     // For now, we don't persist it in App state
@@ -395,8 +421,11 @@ function App() {
           ruleLoadProgress={ruleLoadProgress}
           onBack={handleBackToSelector}
           onOpenRawLogs={() => setAnalysisMode("raw-logs")}
-          cachedMatches={sigmaMatches}
-          onMatchesUpdate={setSigmaMatches}
+          cachedMatches={sigmaHasRun ? sigmaMatches : undefined}
+          onMatchesUpdate={(matches) => {
+            setSigmaMatches(matches);
+            setSigmaHasRun(true);
+          }}
         />
       </AnalysisErrorBoundary>
     );
@@ -516,6 +545,8 @@ function App() {
           filename={filename}
           onSelect={handleAnalysisSelect}
           onReset={handleReset}
+          onOpenSessions={() => setShowSessionManager(true)}
+          sigmaMatches={sigmaMatches}
           platform={selectedPlatform || parsedData.platform}
         />
       </ErrorBoundary>
@@ -714,7 +745,7 @@ interface SigmaAnalysisViewProps {
   onBack: () => void;
   onOpenRawLogs: () => void;
   onMatchesUpdate: (matches: Map<string, SigmaRuleMatch[]>) => void;
-  cachedMatches: Map<string, SigmaRuleMatch[]>;
+  cachedMatches?: Map<string, SigmaRuleMatch[]>;
 }
 
 function SigmaAnalysisView({
