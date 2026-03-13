@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { ParsedData } from "../types";
 import SigmaDetections from "./SigmaDetections";
+import YaraDetections from "./YaraDetections";
 import { SigmaEngine } from "../lib/sigma";
 import { SigmaRuleMatch } from "../lib/sigma/types";
 import "./Dashboard.css";
@@ -227,17 +228,22 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* SIGMA Threat Detection Section */}
+      {/* Detection Sections */}
       {data.entries.length > 0 && (
-        <div className="sigma-section">
-          <SigmaDetections
-            events={data.entries}
-            sigmaEngine={sigmaEngine}
-            onMatchesUpdate={handleAnalysisComplete}
-            cachedMatches={cachedMatches}
-            sourceFiles={data.sourceFiles}
-          />
-        </div>
+        <>
+          <div className="sigma-section">
+            <SigmaDetections
+              events={data.entries}
+              sigmaEngine={sigmaEngine}
+              onMatchesUpdate={handleAnalysisComplete}
+              cachedMatches={cachedMatches}
+              sourceFiles={data.sourceFiles}
+            />
+          </div>
+          <div className="sigma-section">
+            <YaraDetections events={data.entries} platform={data.platform} />
+          </div>
+        </>
       )}
     </div>
   );

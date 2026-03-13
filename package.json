@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm run sync:sigma && npm run bundle:sigma && npm run generate:samples && tsc && vite build",
+    "build": "npm run sync:sigma && npm run bundle:sigma && npm run bundle:yara && npm run generate:samples && tsc && vite build",
     "preview": "vite preview",
     "sync:sigma": "node scripts/sync-sigma.js",
     "sync:yara": "node scripts/sync-yara-rules.js",
     "bundle:sigma": "node scripts/bundle-sigma-rules.js",
+    "bundle:yara": "node scripts/bundle-yara-rules.js",
     "generate:samples": "node scripts/generate-samples-manifest.js",
-    "refresh:rules": "npm run sync:sigma && npm run sync:yara && npm run bundle:sigma && npm run generate:samples"
+    "refresh:rules": "npm run sync:sigma && npm run sync:yara && npm run bundle:sigma && npm run bundle:yara && npm run generate:samples"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",
