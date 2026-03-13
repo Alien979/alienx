@@ -106,9 +106,8 @@ export default function SigmaDetections({
   const [matches, setMatches] = useState<Map<string, SigmaRuleMatch[]>>(
     cachedMatches || new Map(),
   );
-  const [isLoading, setIsLoading] = useState(
-    !(cachedMatches && cachedMatches.size > 0),
-  );
+  // isLoading=false when cachedMatches is provided (even empty Map means "already ran")
+  const [isLoading, setIsLoading] = useState(cachedMatches === undefined);
   const [progress, setProgress] = useState({
     processed: 0,
     total: 0,
@@ -166,8 +165,8 @@ export default function SigmaDetections({
 
   // Run SIGMA matching asynchronously with optimized processing
   useEffect(() => {
-    // Skip processing if we already have cached matches (initial load only)
-    if (cachedMatches && cachedMatches.size > 0 && matches.size === 0) {
+    // Skip processing if we already have cached matches (even empty — means analysis already ran)
+    if (cachedMatches !== undefined && matches.size === 0) {
       setMatches(cachedMatches);
       setIsLoading(false);
       // Notify parent with cached results

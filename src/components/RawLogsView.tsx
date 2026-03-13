@@ -29,8 +29,10 @@ interface ColumnFilter {
 // Helper function to get field value
 function getFieldValue(entry: LogEntry, field: string): string {
   switch (field) {
-    case "timestamp":
-      return entry.timestamp.toISOString();
+    case "timestamp": {
+      const d = entry.timestamp;
+      return d instanceof Date && !isNaN(d.getTime()) ? d.toISOString() : "";
+    }
     case "computer":
       return entry.computer || "";
     case "eventId":
@@ -606,7 +608,10 @@ export default function RawLogsView({
                           }
                         >
                           <span className="log-time">
-                            {entry.timestamp.toLocaleString()}
+                            {entry.timestamp instanceof Date &&
+                            !isNaN(entry.timestamp.getTime())
+                              ? entry.timestamp.toLocaleString()
+                              : "—"}
                           </span>
                           {data.format === "evtx" ? (
                             <>
