@@ -36,18 +36,18 @@ export function EventDetailsModal({
   const [viewMode, setViewMode] = useState<"fields" | "json">("fields");
 
   // Bookmark state
-  const eventIndex = event?.rawLine
+  const eventIndex: number | null = event?.rawLine
     ? hashCode(event.rawLine)
     : event?.eventId
-      ? hashCode(`${event.eventId}-${event?.timestamp}`)
-      : 0;
+      ? hashCode(`${event.eventId}-${String(event?.timestamp)}`)
+      : null;
   const [bookmarked, setBookmarked] = useState(false);
   const [showTagPicker, setShowTagPicker] = useState(false);
   const [bookmarkNote, setBookmarkNote] = useState("");
 
   // Sync bookmark state when event changes
   useEffect(() => {
-    if (eventIndex) {
+    if (eventIndex !== null) {
       const bk = getBookmark(eventIndex);
       setBookmarked(!!bk);
       setBookmarkNote(bk?.note || "");
@@ -210,7 +210,7 @@ export function EventDetailsModal({
             {bookmarked ? (
               <button
                 onClick={() => {
-                  removeBookmark(eventIndex);
+                  if (eventIndex !== null) removeBookmark(eventIndex);
                   setBookmarked(false);
                   setShowTagPicker(false);
                 }}
@@ -250,16 +250,18 @@ export function EventDetailsModal({
                   <button
                     key={t.value}
                     onClick={() => {
-                      addBookmark({
-                        eventIndex,
-                        eventId: String(event?.eventId || ""),
-                        timestamp: String(event?.timestamp || ""),
-                        tag: t.value,
-                        note: bookmarkNote,
-                        createdAt: new Date().toISOString(),
-                      });
-                      setBookmarked(true);
-                      setShowTagPicker(false);
+                      if (eventIndex !== null) {
+                        addBookmark({
+                          eventIndex,
+                          eventId: String(event?.eventId || ""),
+                          timestamp: String(event?.timestamp || ""),
+                          tag: t.value,
+                          note: bookmarkNote,
+                          createdAt: new Date().toISOString(),
+                        });
+                        setBookmarked(true);
+                        setShowTagPicker(false);
+                      }
                     }}
                     style={{
                       background: `${BOOKMARK_COLORS[t.value]}22`,

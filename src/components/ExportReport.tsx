@@ -51,17 +51,21 @@ export default function ExportReport({
 
     // Use setTimeout to allow UI to update
     setTimeout(() => {
-      const content = generateReport({
-        filename,
-        generatedAt: new Date(),
-        platform,
-        data,
-        sigmaMatches,
-        options,
-      });
-
-      downloadReport(content, filename, options.format);
-      setGenerating(false);
+      try {
+        const content = generateReport({
+          filename,
+          generatedAt: new Date(),
+          platform,
+          data,
+          sigmaMatches,
+          options,
+        });
+        downloadReport(content, filename, options.format);
+      } catch (err) {
+        console.error("[Export] Report generation failed:", err);
+      } finally {
+        setGenerating(false);
+      }
     }, 100);
   };
 
@@ -69,17 +73,21 @@ export default function ExportReport({
     setGenerating(true);
 
     setTimeout(() => {
-      const content = generateReport({
-        filename,
-        generatedAt: new Date(),
-        platform,
-        data,
-        sigmaMatches,
-        options: { ...options, format: "html" },
-      });
-
-      setPreviewContent(content);
-      setGenerating(false);
+      try {
+        const content = generateReport({
+          filename,
+          generatedAt: new Date(),
+          platform,
+          data,
+          sigmaMatches,
+          options: { ...options, format: "html" },
+        });
+        setPreviewContent(content);
+      } catch (err) {
+        console.error("[Export] Preview generation failed:", err);
+      } finally {
+        setGenerating(false);
+      }
     }, 100);
   };
 

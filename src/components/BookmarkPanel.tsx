@@ -92,7 +92,7 @@ export default function BookmarkPanel({
     setBookmarkVersion((v) => v + 1);
   };
 
-  const handleCopyAll = () => {
+  const handleCopyAll = async () => {
     const text = filtered
       .map((bk) => {
         const entry = findEntry(bk);
@@ -104,7 +104,11 @@ export default function BookmarkPanel({
         return `[${tag}] EID ${eid} @ ${time}${source ? ` (${source})` : ""}${note}`;
       })
       .join("\n");
-    navigator.clipboard.writeText(text);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      alert("Could not copy to clipboard. Please grant clipboard permission.");
+    }
   };
 
   const formatTimestamp = (ts: string) => {
