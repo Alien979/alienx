@@ -32,6 +32,7 @@ import type { LogEntry } from "./types";
 import { clearVTCache } from "./lib/vtCache";
 import { createSigmaEngine, SigmaEngine } from "./lib/sigma";
 import { SigmaRuleMatch } from "./lib/sigma/types";
+import type { YaraRuleMatch, YaraScanStats } from "./lib/yara";
 import type { SigmaPlatform } from "./lib/sigma/utils/autoLoadRules";
 import SigmaDetections from "./components/SigmaDetections";
 import {
@@ -68,6 +69,8 @@ function App() {
   const [sigmaHasRun, setSigmaHasRun] = useState(false);
   const [selectedPlatform, setSelectedPlatform] =
     useState<SigmaPlatform | null>(null);
+  const [yaraMatches, setYaraMatches] = useState<YaraRuleMatch[] | null>(null);
+  const [yaraStats, setYaraStats] = useState<YaraScanStats | null>(null);
   const [showSessionManager, setShowSessionManager] = useState(false);
   const [showBookmarkPanel, setShowBookmarkPanel] = useState(false);
   const [pivotEvent, setPivotEvent] = useState<LogEntry | null>(null);
@@ -190,6 +193,7 @@ function App() {
       toggleTheme,
       sigmaMatches,
       selectedPlatform,
+      sigmaHasRun,
     ],
   );
 
@@ -207,6 +211,8 @@ function App() {
     setSigmaHasRun(false);
     setSigmaMatches(new Map());
     setSelectedPlatform(null);
+    setYaraMatches(null);
+    setYaraStats(null);
     setCurrentView("select");
   };
 
@@ -219,6 +225,8 @@ function App() {
     setSigmaMatches(new Map());
     setSigmaHasRun(false);
     setSelectedPlatform(null);
+    setYaraMatches(null);
+    setYaraStats(null);
     // Clear loaded rules from engine
     sigmaEngine.clearRules();
     setCurrentView("upload");
@@ -425,6 +433,12 @@ function App() {
           onMatchesUpdate={(matches) => {
             setSigmaMatches(matches);
             setSigmaHasRun(true);
+          }}
+          cachedYaraMatches={yaraMatches ?? undefined}
+          cachedYaraStats={yaraStats ?? undefined}
+          onYaraMatchesUpdate={(matches, stats) => {
+            setYaraMatches(matches);
+            setYaraStats(stats);
           }}
         />
       </AnalysisErrorBoundary>
@@ -746,6 +760,12 @@ interface SigmaAnalysisViewProps {
   onOpenRawLogs: () => void;
   onMatchesUpdate: (matches: Map<string, SigmaRuleMatch[]>) => void;
   cachedMatches?: Map<string, SigmaRuleMatch[]>;
+  cachedYaraMatches?: YaraRuleMatch[];
+  cachedYaraStats?: YaraScanStats;
+  onYaraMatchesUpdate?: (
+    matches: YaraRuleMatch[],
+    stats: YaraScanStats | null,
+  ) => void;
 }
 
 function SigmaAnalysisView({
@@ -759,6 +779,9 @@ function SigmaAnalysisView({
   onOpenRawLogs,
   onMatchesUpdate,
   cachedMatches,
+  cachedYaraMatches,
+  cachedYaraStats,
+  onYaraMatchesUpdate,
 }: SigmaAnalysisViewProps) {
   // Skip loading screen - rules load in background
   return (
@@ -770,6 +793,9 @@ function SigmaAnalysisView({
       sigmaEngine={sigmaEngine}
       onMatchesUpdate={onMatchesUpdate}
       cachedMatches={cachedMatches}
+      cachedYaraMatches={cachedYaraMatches}
+      cachedYaraStats={cachedYaraStats}
+      onYaraMatchesUpdate={onYaraMatchesUpdate}
     />
   );
 }

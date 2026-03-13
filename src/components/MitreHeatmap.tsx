@@ -88,13 +88,15 @@ export const MitreHeatmap: React.FC<MitreHeatmapProps> = ({ tags }) => {
         showSubtechniques: id.includes("."),
       })),
     };
-    const blob = new Blob([JSON.stringify(layer, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(layer, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "alienx-navigator-layer.json";
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 150);
   }, [techniques, tacticCounts]);
 
   if (tags.length === 0) return null;
@@ -109,7 +111,14 @@ export const MitreHeatmap: React.FC<MitreHeatmapProps> = ({ tags }) => {
         border: "1px solid rgba(0,240,255,0.1)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "0.75rem",
+        }}
+      >
         <h4
           style={{
             color: "#00f0ff",

@@ -202,11 +202,19 @@ export default function ProcessExecutionDashboard({
     useState<number>(2);
   const [excludedPaths, setExcludedPaths] = useState<string[]>(() => {
     const saved = localStorage.getItem("processAnalysisExcludedPaths");
-    return saved ? JSON.parse(saved) : DEFAULT_EXCLUDED_PATHS;
+    try {
+      return saved ? JSON.parse(saved) : DEFAULT_EXCLUDED_PATHS;
+    } catch {
+      return DEFAULT_EXCLUDED_PATHS;
+    }
   });
   const [excludedProcesses, setExcludedProcesses] = useState<string[]>(() => {
     const saved = localStorage.getItem("processAnalysisExcludedProcesses");
-    return saved ? JSON.parse(saved) : DEFAULT_EXCLUDED_PROCESSES;
+    try {
+      return saved ? JSON.parse(saved) : DEFAULT_EXCLUDED_PROCESSES;
+    } catch {
+      return DEFAULT_EXCLUDED_PROCESSES;
+    }
   });
   const [showExclusionEditor, setShowExclusionEditor] =
     useState<boolean>(false);
@@ -687,7 +695,10 @@ export default function ProcessExecutionDashboard({
                 labelLine={{ stroke: "#666" }}
               >
                 {locationDistribution.map((item, index) => (
-                  <Cell key={item.location || index} fill={COLORS[index % COLORS.length]} />
+                  <Cell
+                    key={item.location || index}
+                    fill={COLORS[index % COLORS.length]}
+                  />
                 ))}
               </Pie>
               <Tooltip

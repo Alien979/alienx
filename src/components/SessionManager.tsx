@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from "react";
 import {
   getSessionsList,
   saveSession,
@@ -6,25 +6,33 @@ import {
   deleteSession,
   renameSession,
   getStorageUsage,
-  SessionMetadata
-} from '../lib/sessionStorage';
-import { ParsedData } from '../types';
-import { SigmaRuleMatch } from '../lib/sigma/types';
-import { ConversationMessage } from '../lib/llm/storage/conversations';
-import './SessionManager.css';
+  SessionMetadata,
+} from "../lib/sessionStorage";
+import { ParsedData } from "../types";
+import { SigmaRuleMatch } from "../lib/sigma/types";
+import { ConversationMessage } from "../lib/llm/storage/conversations";
+import "./SessionManager.css";
 
 interface SessionManagerProps {
   currentData: ParsedData | null;
   currentFilename: string;
   currentPlatform: string | null;
   currentMatches: Map<string, SigmaRuleMatch[]>;
-  currentConversation?: { provider: string; model: string; messages: ConversationMessage[] };
+  currentConversation?: {
+    provider: string;
+    model: string;
+    messages: ConversationMessage[];
+  };
   onLoadSession: (
     data: ParsedData,
     filename: string,
     platform: string | null,
     matches: Map<string, SigmaRuleMatch[]>,
-    conversation?: { provider: string; model: string; messages: ConversationMessage[] }
+    conversation?: {
+      provider: string;
+      model: string;
+      messages: ConversationMessage[];
+    },
   ) => void;
   onClose: () => void;
 }
@@ -36,13 +44,17 @@ export default function SessionManager({
   currentMatches,
   currentConversation,
   onLoadSession,
-  onClose
+  onClose,
 }: SessionManagerProps) {
   const [sessions, setSessions] = useState<SessionMetadata[]>(getSessionsList);
-  const [saveName, setSaveName] = useState(currentFilename ? currentFilename.replace(/\.[^.]+$/, '') : '');
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const [saveName, setSaveName] = useState(
+    currentFilename ? currentFilename.replace(/\.[^.]+$/, "") : "",
+  );
+  const [saveStatus, setSaveStatus] = useState<
+    "idle" | "saving" | "success" | "error"
+  >("idle");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState('');
+  const [editName, setEditName] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const storage = getStorageUsage();
@@ -50,7 +62,7 @@ export default function SessionManager({
   const handleSave = useCallback(() => {
     if (!currentData || !saveName.trim()) return;
 
-    setSaveStatus('saving');
+    setSaveStatus("saving");
 
     // Small delay to show saving state
     setTimeout(() => {
@@ -60,52 +72,85 @@ export default function SessionManager({
         currentPlatform,
         currentData,
         currentMatches,
-        currentConversation
+        currentConversation,
       );
 
       if (result) {
-        setSaveStatus('success');
+        setSaveStatus("success");
         setSessions(getSessionsList());
-        setTimeout(() => setSaveStatus('idle'), 2000);
+        setTimeout(() => setSaveStatus("idle"), 2000);
       } else {
-        setSaveStatus('error');
-        setTimeout(() => setSaveStatus('idle'), 3000);
+        setSaveStatus("error");
+        setTimeout(() => setSaveStatus("idle"), 3000);
       }
     }, 100);
-  }, [currentData, currentFilename, currentPlatform, currentMatches, currentConversation, saveName]);
+  }, [
+    currentData,
+    currentFilename,
+    currentPlatform,
+    currentMatches,
+    currentConversation,
+    saveName,
+  ]);
 
-  const handleLoad = useCallback((id: string) => {
-    const session = loadSession(id);
-    if (session) {
-      onLoadSession(session.data, session.filename, session.platform, session.matches, session.conversation);
-      onClose();
-    }
-  }, [onLoadSession, onClose]);
+  const handleLoad = useCallback(
+    (id: string) => {
+      const session = loadSession(id);
+      if (session) {
+        onLoadSession(
+          session.data,
+          session.filename,
+          session.platform,
+          session.matches,
+          session.conversation,
+        );
+        onClose();
+      }
+    },
+    [onLoadSession, onClose],
+  );
 
-  const handleDelete = useCallback((id: string) => {
-    if (confirmDelete === id) {
-      deleteSession(id);
-      setSessions(getSessionsList());
-      setConfirmDelete(null);
-    } else {
-      setConfirmDelete(id);
-      // Auto-cancel after 3 seconds
-      setTimeout(() => setConfirmDelete(null), 3000);
-    }
-  }, [confirmDelete]);
+  const confirmDeleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
-  const handleRename = useCallback((id: string) => {
-    if (editingId === id && editName.trim()) {
-      renameSession(id, editName.trim());
-      setSessions(getSessionsList());
-      setEditingId(null);
-      setEditName('');
-    } else {
-      const session = sessions.find(s => s.id === id);
-      setEditingId(id);
-      setEditName(session?.name || '');
-    }
-  }, [editingId, editName, sessions]);
+  const handleDelete = useCallback(
+    (id: string) => {
+      if (confirmDelete === id) {
+        if (confirmDeleteTimerRef.current)
+          clearTimeout(confirmDeleteTimerRef.current);
+        deleteSession(id);
+        setSessions(getSessionsList());
+        setConfirmDelete(null);
+      } else {
+        if (confirmDeleteTimerRef.current)
+          clearTimeout(confirmDeleteTimerRef.current);
+        setConfirmDelete(id);
+        // Auto-cancel after 3 seconds
+        confirmDeleteTimerRef.current = setTimeout(
+          () => setConfirmDelete(null),
+          3000,
+        );
+      }
+    },
+    [confirmDelete],
+  );
+
+  const handleRename = useCallback(
+    (id: string) => {
+      if (editingId === id && editName.trim()) {
+        renameSession(id, editName.trim());
+        setSessions(getSessionsList());
+        setEditingId(null);
+        setEditName("");
+      } else {
+        const session = sessions.find((s) => s.id === id);
+        setEditingId(id);
+        setEditName(session?.name || "");
+      }
+    },
+    [editingId, editName, sessions],
+  );
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -114,9 +159,9 @@ export default function SessionManager({
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
 
     if (days === 0) {
-      return `Today at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      return `Today at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
     } else if (days === 1) {
-      return `Yesterday at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      return `Yesterday at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
     } else if (days < 7) {
       return `${days} days ago`;
     } else {
@@ -132,10 +177,12 @@ export default function SessionManager({
 
   return (
     <div className="session-manager-overlay" onClick={onClose}>
-      <div className="session-manager" onClick={e => e.stopPropagation()}>
+      <div className="session-manager" onClick={(e) => e.stopPropagation()}>
         <div className="session-header">
           <h2>💾 Session Manager</h2>
-          <button className="close-btn" onClick={onClose}>×</button>
+          <button className="close-btn" onClick={onClose}>
+            ×
+          </button>
         </div>
 
         {/* Save Current Session */}
@@ -147,25 +194,34 @@ export default function SessionManager({
                 type="text"
                 placeholder="Session name..."
                 value={saveName}
-                onChange={e => setSaveName(e.target.value)}
+                onChange={(e) => setSaveName(e.target.value)}
                 className="save-input"
-                onKeyDown={e => e.key === 'Enter' && handleSave()}
+                onKeyDown={(e) => e.key === "Enter" && handleSave()}
               />
               <button
                 className={`save-btn ${saveStatus}`}
                 onClick={handleSave}
-                disabled={saveStatus === 'saving' || !saveName.trim()}
+                disabled={saveStatus === "saving" || !saveName.trim()}
               >
-                {saveStatus === 'saving' ? '⏳ Saving...' :
-                 saveStatus === 'success' ? '✓ Saved!' :
-                 saveStatus === 'error' ? '✗ Error' :
-                 '💾 Save'}
+                {saveStatus === "saving"
+                  ? "⏳ Saving..."
+                  : saveStatus === "success"
+                    ? "✓ Saved!"
+                    : saveStatus === "error"
+                      ? "✗ Error"
+                      : "💾 Save"}
               </button>
             </div>
             <div className="save-info">
               <span>{currentData.entries.length.toLocaleString()} events</span>
               {currentMatches.size > 0 && (
-                <span>{Array.from(currentMatches.values()).reduce((s, m) => s + m.length, 0)} detections</span>
+                <span>
+                  {Array.from(currentMatches.values()).reduce(
+                    (s, m) => s + m.length,
+                    0,
+                  )}{" "}
+                  detections
+                </span>
               )}
               {currentPlatform && <span>{currentPlatform} rules</span>}
             </div>
@@ -180,25 +236,27 @@ export default function SessionManager({
             <div className="no-sessions">
               <span className="no-sessions-icon">📭</span>
               <p>No saved sessions yet</p>
-              <p className="no-sessions-hint">Save your current analysis to continue later</p>
+              <p className="no-sessions-hint">
+                Save your current analysis to continue later
+              </p>
             </div>
           ) : (
             <div className="sessions-list">
-              {sessions.map(session => (
+              {sessions.map((session) => (
                 <div key={session.id} className="session-item">
                   <div className="session-info">
                     {editingId === session.id ? (
                       <input
                         type="text"
                         value={editName}
-                        onChange={e => setEditName(e.target.value)}
+                        onChange={(e) => setEditName(e.target.value)}
                         className="edit-name-input"
                         autoFocus
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') handleRename(session.id);
-                          if (e.key === 'Escape') {
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleRename(session.id);
+                          if (e.key === "Escape") {
                             setEditingId(null);
-                            setEditName('');
+                            setEditName("");
                           }
                         }}
                       />
@@ -206,11 +264,15 @@ export default function SessionManager({
                       <span className="session-name">{session.name}</span>
                     )}
                     <span className="session-meta">
-                      {session.filename} • {session.eventCount.toLocaleString()} events
-                      {session.matchCount > 0 && ` • ${session.matchCount} detections`}
+                      {session.filename} • {session.eventCount.toLocaleString()}{" "}
+                      events
+                      {session.matchCount > 0 &&
+                        ` • ${session.matchCount} detections`}
                       {session.platform && ` • ${session.platform}`}
                     </span>
-                    <span className="session-date">{formatDate(session.createdAt)}</span>
+                    <span className="session-date">
+                      {formatDate(session.createdAt)}
+                    </span>
                   </div>
                   <div className="session-actions">
                     <button
@@ -225,14 +287,18 @@ export default function SessionManager({
                       onClick={() => handleRename(session.id)}
                       title={editingId === session.id ? "Save name" : "Rename"}
                     >
-                      {editingId === session.id ? '✓' : '✏️'}
+                      {editingId === session.id ? "✓" : "✏️"}
                     </button>
                     <button
-                      className={`action-btn delete ${confirmDelete === session.id ? 'confirm' : ''}`}
+                      className={`action-btn delete ${confirmDelete === session.id ? "confirm" : ""}`}
                       onClick={() => handleDelete(session.id)}
-                      title={confirmDelete === session.id ? "Click again to confirm" : "Delete session"}
+                      title={
+                        confirmDelete === session.id
+                          ? "Click again to confirm"
+                          : "Delete session"
+                      }
                     >
-                      {confirmDelete === session.id ? '⚠️' : '🗑️'}
+                      {confirmDelete === session.id ? "⚠️" : "🗑️"}
                     </button>
                   </div>
                 </div>
@@ -250,8 +316,8 @@ export default function SessionManager({
             />
           </div>
           <span className="storage-text">
-            {formatSize(storage.used)} / {formatSize(storage.available)} used
-            ({storage.percentage.toFixed(1)}%)
+            {formatSize(storage.used)} / {formatSize(storage.available)} used (
+            {storage.percentage.toFixed(1)}%)
           </span>
         </div>
 

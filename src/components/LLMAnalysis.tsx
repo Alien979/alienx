@@ -91,7 +91,7 @@ export default function LLMAnalysis({
     }
   }, [conversationHistory, isAnalyzing]);
 
-  // Save conversation history whenever it changes
+  // Save conversation history whenever it changes (not when provider/model change — that would corrupt persisted session)
   useEffect(() => {
     if (conversationHistory.length > 0) {
       saveConversation({
@@ -101,52 +101,51 @@ export default function LLMAnalysis({
         lastUpdated: Date.now(),
       });
     }
-  }, [conversationHistory, provider, model]);
+  }, [conversationHistory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const loadModels = async () => {
+    let cancelled = false;
+    loadModels();
+    return () => {
+      cancelled = true;
+    };
+
+    async function loadModels() {
       const meta = getProviderMetadata(provider);
       const apiKey = getAPIKey(provider);
       const hasKey = meta?.requiresApiKey ? apiKey !== null : true;
 
       if (!hasKey && meta?.requiresApiKey) {
-        // Check if ANY provider has an API key configured
         const hasAnyApiKey = ["openai", "anthropic", "google"].some((p) =>
           getAPIKey(p),
         );
-
-        // Only auto-show settings if no provider has an API key
-        if (!hasAnyApiKey) {
-          setShowSettings(true);
-        }
-
-        // Use fallback models when no API key is available
+        if (!hasAnyApiKey && !cancelled) setShowSettings(true);
         const fallback = getAvailableModels(provider);
-        setAvailableModels(fallback);
-        if (fallback.length > 0 && (!model || !fallback.includes(model))) {
-          const metaDefault = getProviderMetadata(provider);
-          setModel(
-            metaDefault?.defaultModel &&
-              fallback.includes(metaDefault.defaultModel)
-              ? metaDefault.defaultModel
-              : fallback[0],
-          );
+        if (!cancelled) {
+          setAvailableModels(fallback);
+          if (fallback.length > 0 && (!model || !fallback.includes(model))) {
+            const metaDefault = getProviderMetadata(provider);
+            setModel(
+              metaDefault?.defaultModel &&
+                fallback.includes(metaDefault.defaultModel)
+                ? metaDefault.defaultModel
+                : fallback[0],
+            );
+          }
         }
         return;
       }
 
-      // Only fetch live models if API key is available
       if (hasKey && apiKey) {
-        // For providers that require endpoint (like Ollama), pass it in the config
         const endpoint = meta?.requiresEndpoint ? apiKey : undefined;
         const liveModels = await fetchAvailableModels(provider, {
           apiKey: meta?.requiresApiKey ? apiKey : "",
           endpoint,
         });
+        if (cancelled) return;
         const fallback =
           liveModels.length > 0 ? liveModels : getAvailableModels(provider);
         setAvailableModels(fallback);
-
         if (fallback.length > 0 && (!model || !fallback.includes(model))) {
           const metaDefault = getProviderMetadata(provider);
           setModel(
@@ -157,23 +156,22 @@ export default function LLMAnalysis({
           );
         }
       } else {
-        // Use fallback models
         const fallback = getAvailableModels(provider);
-        setAvailableModels(fallback);
-        if (fallback.length > 0 && (!model || !fallback.includes(model))) {
-          const metaDefault = getProviderMetadata(provider);
-          setModel(
-            metaDefault?.defaultModel &&
-              fallback.includes(metaDefault.defaultModel)
-              ? metaDefault.defaultModel
-              : fallback[0],
-          );
+        if (!cancelled) {
+          setAvailableModels(fallback);
+          if (fallback.length > 0 && (!model || !fallback.includes(model))) {
+            const metaDefault = getProviderMetadata(provider);
+            setModel(
+              metaDefault?.defaultModel &&
+                fallback.includes(metaDefault.defaultModel)
+                ? metaDefault.defaultModel
+                : fallback[0],
+            );
+          }
         }
       }
-    };
-
-    loadModels();
-  }, [provider, configChangeCounter]);
+    }
+  }, [provider, configChangeCounter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAnalyze = async () => {
     const meta = getProviderMetadata(provider);
@@ -353,11 +351,12 @@ export default function LLMAnalysis({
     }
   };
 
+  const copyBtnRef = useRef<HTMLButtonElement>(null);
+
   const handleCopyResult = () => {
     if (analysisResult) {
-      navigator.clipboard.writeText(analysisResult);
-      // Show temporary feedback
-      const button = document.querySelector(".copy-button") as HTMLElement;
+      navigator.clipboard.writeText(analysisResult).catch(() => {});
+      const button = copyBtnRef.current;
       if (button) {
         const originalText = button.textContent;
         button.textContent = "Copied!";
@@ -378,7 +377,7 @@ export default function LLMAnalysis({
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 150);
     }
   };
 
@@ -620,6 +619,7 @@ export default function LLMAnalysis({
                     </button>
                   </div>
                   <button
+                    ref={copyBtnRef}
                     onClick={handleCopyResult}
                     className="action-button copy-button"
                   >

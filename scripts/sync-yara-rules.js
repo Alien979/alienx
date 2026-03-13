@@ -110,7 +110,11 @@ function listYaraFiles(dir, baseDir = dir) {
     }
 
     const lower = entry.name.toLowerCase();
-    if (lower.endsWith(".yar") || lower.endsWith(".yara")) {
+    if (
+      lower.endsWith(".yar") ||
+      lower.endsWith(".yara") ||
+      lower.endsWith(".rule")
+    ) {
       files.push({
         fullPath,
         relativePath: path.relative(baseDir, fullPath).replace(/\\/g, "/"),

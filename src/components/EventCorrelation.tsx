@@ -43,7 +43,9 @@ export default function EventCorrelation({
   const [minEvents, setMinEvents] = useState(3);
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [showExportReport, setShowExportReport] = useState(false);
-  const [viewMode, setViewMode] = useState<"chains" | "story" | "graph">("chains");
+  const [viewMode, setViewMode] = useState<"chains" | "story" | "graph">(
+    "chains",
+  );
   const [isCorrelating, setIsCorrelating] = useState(true);
   const [chains, setChains] = useState<CorrelatedChain[]>([]);
   const [temporalWindow, setTemporalWindow] = useState(30); // seconds
@@ -54,25 +56,32 @@ export default function EventCorrelation({
 
   // Run correlation engine asynchronously to avoid blocking UI
   useEffect(() => {
+    let cancelled = false;
+
     const runCorrelation = async () => {
       setIsCorrelating(true);
       setCorrelationProgress({ current: 0, total: 5 });
       // Yield to browser to show loading state
       await new Promise((resolve) => setTimeout(resolve, 100));
+      if (cancelled) return;
 
       const result = correlateEvents(
         entries,
         sigmaMatches,
         (current, total) => {
-          setCorrelationProgress({ current, total });
+          if (!cancelled) setCorrelationProgress({ current, total });
         },
         { temporalWindowMs: temporalWindow * 1000 },
       );
+      if (cancelled) return;
       setChains(result);
       setIsCorrelating(false);
     };
 
     runCorrelation();
+    return () => {
+      cancelled = true;
+    };
   }, [entries, sigmaMatches, temporalWindow]);
 
   // Filter and sort chains
@@ -383,7 +392,10 @@ interface GraphNode {
   label: string;
   hasSigma: boolean;
   sigmaRules: string[]; // rule titles
-  sigmaDetails: Array<{ rule: string; fields: Array<{ field: string; value: string; modifier?: string }> }>;
+  sigmaDetails: Array<{
+    rule: string;
+    fields: Array<{ field: string; value: string; modifier?: string }>;
+  }>;
   chainIdx: number;
   entry: LogEntry;
   depth: number;
@@ -423,7 +435,11 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
     const children = new Map<number, number[]>();
     const hasParent = new Set<number>();
     for (const rel of chain.relationships) {
-      if (rel.type === "process_spawn" || rel.type === "same_process" || rel.type === "file_operation") {
+      if (
+        rel.type === "process_spawn" ||
+        rel.type === "same_process" ||
+        rel.type === "file_operation"
+      ) {
         const c = children.get(rel.sourceIndex) || [];
         c.push(rel.targetIndex);
         children.set(rel.sourceIndex, c);
@@ -440,20 +456,27 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
 
     // Assign depths via BFS
     const depthMap = new Map<number, number>();
-    const queue: Array<{ idx: number; depth: number }> = roots.map(r => ({ idx: r, depth: 0 }));
+    const queue: Array<{ idx: number; depth: number }> = roots.map((r) => ({
+      idx: r,
+      depth: 0,
+    }));
     const visited = new Set<number>();
     while (queue.length > 0) {
       const { idx, depth } = queue.shift()!;
       if (visited.has(idx)) continue;
       visited.add(idx);
       depthMap.set(idx, depth);
-      for (const child of (children.get(idx) || [])) {
+      for (const child of children.get(idx) || []) {
         if (!visited.has(child)) queue.push({ idx: child, depth: depth + 1 });
       }
     }
     // Add unvisited nodes
     for (let i = 0; i < chain.events.length; i++) {
-      if (!depthMap.has(i)) depthMap.set(i, (depthMap.size > 0 ? Math.max(...depthMap.values()) + 1 : 0));
+      if (!depthMap.has(i))
+        depthMap.set(
+          i,
+          depthMap.size > 0 ? Math.max(...depthMap.values()) + 1 : 0,
+        );
     }
 
     // Group nodes by depth for horizontal positioning
@@ -466,7 +489,9 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
 
     // Limit displayed nodes for very large chains
     const MAX_NODES = 50;
-    const allIndices = Array.from(depthMap.keys()).sort((a, b) => (depthMap.get(a) || 0) - (depthMap.get(b) || 0));
+    const allIndices = Array.from(depthMap.keys()).sort(
+      (a, b) => (depthMap.get(a) || 0) - (depthMap.get(b) || 0),
+    );
     const displayIndices = new Set(allIndices.slice(0, MAX_NODES));
 
     // Compute positions — tree layout: depth downward, siblings side-by-side
@@ -475,11 +500,18 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
     const globalIdxMap = new Map<number, number>(); // chain localIdx → graph node idx
 
     const sortedDepths = Array.from(depthGroups.keys()).sort((a, b) => a - b);
-    const maxWidth = Math.max(...Array.from(depthGroups.values()).map(g => g.filter(i => displayIndices.has(i)).length), 1);
+    const maxWidth = Math.max(
+      ...Array.from(depthGroups.values()).map(
+        (g) => g.filter((i) => displayIndices.has(i)).length,
+      ),
+      1,
+    );
     const canvasW = Math.max(900, maxWidth * NODE_H_SPACING + 100);
 
     for (const depth of sortedDepths) {
-      const group = (depthGroups.get(depth) || []).filter(i => displayIndices.has(i));
+      const group = (depthGroups.get(depth) || []).filter((i) =>
+        displayIndices.has(i),
+      );
       const totalW = (group.length - 1) * NODE_H_SPACING;
       const startX = canvasW / 2 - totalW / 2;
       const y = 60 + depth * NODE_V_SPACING;
@@ -488,18 +520,27 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
         const event = chain.events[eventIdx];
         if (!event) return;
 
-        const procName = event.eventData?.Image?.split(/[\\\/]/).pop()
-          || event.eventData?.TargetFilename?.split(/[\\\/]/).pop()
-          || `Event ${event.eventId || "?"}`;
+        const procName =
+          event.eventData?.Image?.split(/[\\\/]/).pop() ||
+          event.eventData?.TargetFilename?.split(/[\\\/]/).pop() ||
+          `Event ${event.eventId || "?"}`;
 
         // Check SIGMA matches for this event
         const sigmaRules: string[] = [];
         const sigmaDetails: GraphNode["sigmaDetails"] = [];
         for (const sm of chain.sigmaMatches) {
-          const evtMatch = sm.event === event || (sm.event?.rawLine && event.rawLine && sm.event.rawLine === event.rawLine);
+          const evtMatch =
+            sm.event === event ||
+            (sm.event?.rawLine &&
+              event.rawLine &&
+              sm.event.rawLine === event.rawLine);
           if (evtMatch) {
             sigmaRules.push(sm.rule.title);
-            const fields: Array<{ field: string; value: string; modifier?: string }> = [];
+            const fields: Array<{
+              field: string;
+              value: string;
+              modifier?: string;
+            }> = [];
             if (sm.selectionMatches) {
               for (const selM of sm.selectionMatches) {
                 if (!selM.matched) continue;
@@ -507,7 +548,10 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
                   if (fm.matched) {
                     fields.push({
                       field: fm.field,
-                      value: fm.value !== undefined && fm.value !== null ? String(fm.value) : "N/A",
+                      value:
+                        fm.value !== undefined && fm.value !== null
+                          ? String(fm.value)
+                          : "N/A",
                       modifier: fm.modifier ? fm.modifier : undefined,
                     });
                   }
@@ -550,11 +594,11 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
   // Compute SVG dimensions
   const svgWidth = useMemo(() => {
     if (nodes.length === 0) return 900;
-    return Math.max(900, Math.max(...nodes.map(n => n.x)) + 100);
+    return Math.max(900, Math.max(...nodes.map((n) => n.x)) + 100);
   }, [nodes]);
   const svgHeight = useMemo(() => {
     if (nodes.length === 0) return 500;
-    return Math.max(500, Math.max(...nodes.map(n => n.y)) + 120);
+    return Math.max(500, Math.max(...nodes.map((n) => n.y)) + 120);
   }, [nodes]);
 
   // Reset zoom/pan when chain changes
@@ -566,11 +610,14 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
   }, [selectedChain]);
 
   // Pan handlers
-  const handleSvgMouseDown = useCallback((e: React.MouseEvent) => {
-    if ((e.target as Element).closest("g[data-node]")) return;
-    isPanning.current = true;
-    panStart.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
-  }, [pan]);
+  const handleSvgMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if ((e.target as Element).closest("g[data-node]")) return;
+      isPanning.current = true;
+      panStart.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
+    },
+    [pan],
+  );
 
   const handleSvgMouseMove = useCallback((e: React.MouseEvent) => {
     if (!isPanning.current) return;
@@ -587,11 +634,13 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
   // Zoom handler
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    setZoom(z => Math.max(0.3, Math.min(3, z - e.deltaY * 0.001)));
+    setZoom((z) => Math.max(0.3, Math.min(3, z - e.deltaY * 0.001)));
   }, []);
 
   if (chains.length === 0) {
-    return <div className="story-empty">No chains match the current filters.</div>;
+    return (
+      <div className="story-empty">No chains match the current filters.</div>
+    );
   }
 
   const currentChain = chains[selectedChain] || chains[0];
@@ -605,14 +654,23 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
             key={chain.id}
             className={selectedChain === i ? "active" : ""}
             onClick={() => setSelectedChain(i)}
-            style={{ borderLeftColor: SEVERITY_NODE_COLORS[chain.severity] || "#888" }}
+            style={{
+              borderLeftColor: SEVERITY_NODE_COLORS[chain.severity] || "#888",
+            }}
           >
             Chain {i + 1}{" "}
-            <span style={{ fontSize: "0.7rem", color: SEVERITY_NODE_COLORS[chain.severity] || "#888" }}>
+            <span
+              style={{
+                fontSize: "0.7rem",
+                color: SEVERITY_NODE_COLORS[chain.severity] || "#888",
+              }}
+            >
               {chain.severity}
             </span>
             {chain.sigmaMatches.length > 0 && (
-              <span style={{ color: "#ef4444", marginLeft: 4, fontSize: "0.65rem" }}>
+              <span
+                style={{ color: "#ef4444", marginLeft: 4, fontSize: "0.65rem" }}
+              >
                 ⚠ {chain.sigmaMatches.length}
               </span>
             )}
@@ -626,10 +684,33 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
         <span>{currentChain.relationships.length} relationships</span>
         <span>{currentChain.sigmaMatches.length} SIGMA detections</span>
         <span className="graph-zoom-controls">
-          <button onClick={() => setZoom(z => Math.min(3, z + 0.2))} title="Zoom in">+</button>
-          <span style={{ fontSize: "0.7rem", minWidth: 40, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
-          <button onClick={() => setZoom(z => Math.max(0.3, z - 0.2))} title="Zoom out">−</button>
-          <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} title="Reset view" style={{ marginLeft: 4 }}>⟲</button>
+          <button
+            onClick={() => setZoom((z) => Math.min(3, z + 0.2))}
+            title="Zoom in"
+          >
+            +
+          </button>
+          <span
+            style={{ fontSize: "0.7rem", minWidth: 40, textAlign: "center" }}
+          >
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            onClick={() => setZoom((z) => Math.max(0.3, z - 0.2))}
+            title="Zoom out"
+          >
+            −
+          </button>
+          <button
+            onClick={() => {
+              setZoom(1);
+              setPan({ x: 0, y: 0 });
+            }}
+            title="Reset view"
+            style={{ marginLeft: 4 }}
+          >
+            ⟲
+          </button>
         </span>
       </div>
 
@@ -642,7 +723,10 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
           </span>
         ))}
         <span className="legend-item">
-          <span className="legend-dot" style={{ background: "#ef4444", boxShadow: "0 0 6px #ef4444" }} />
+          <span
+            className="legend-dot"
+            style={{ background: "#ef4444", boxShadow: "0 0 6px #ef4444" }}
+          />
           SIGMA match
         </span>
       </div>
@@ -658,7 +742,10 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
           width={svgWidth}
           height={svgHeight}
           className="correlation-graph-svg"
-          style={{ transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`, transformOrigin: "0 0" }}
+          style={{
+            transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+            transformOrigin: "0 0",
+          }}
           onMouseDown={handleSvgMouseDown}
           onMouseMove={handleSvgMouseMove}
           onMouseUp={handleSvgMouseUp}
@@ -667,7 +754,16 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
           {/* Edge arrows definition */}
           <defs>
             {Object.entries(EDGE_COLORS).map(([type, color]) => (
-              <marker key={type} id={`arrow-${type}`} viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto">
+              <marker
+                key={type}
+                id={`arrow-${type}`}
+                viewBox="0 0 10 6"
+                refX="10"
+                refY="3"
+                markerWidth="8"
+                markerHeight="6"
+                orient="auto"
+              >
                 <path d="M0,0 L10,3 L0,6 Z" fill={color} />
               </marker>
             ))}
@@ -706,7 +802,7 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
             const r = node.hasSigma ? 14 : 10;
             const fillColor = node.hasSigma
               ? "#ef4444"
-              : (SEVERITY_NODE_COLORS[currentChain.severity] || "#60a5fa");
+              : SEVERITY_NODE_COLORS[currentChain.severity] || "#60a5fa";
 
             return (
               <g
@@ -718,14 +814,32 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
                 onMouseLeave={() => setHoveredNode(null)}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setSelectedNode(prev => prev?.id === node.id ? null : node);
+                  setSelectedNode((prev) =>
+                    prev?.id === node.id ? null : node,
+                  );
                 }}
               >
                 {/* Glow ring for SIGMA nodes */}
                 {node.hasSigma && (
-                  <circle r={r + 6} fill="none" stroke="#ef4444" strokeWidth={2} strokeOpacity={0.3}>
-                    <animate attributeName="r" values={`${r + 4};${r + 8};${r + 4}`} dur="2s" repeatCount="indefinite" />
-                    <animate attributeName="stroke-opacity" values="0.4;0.1;0.4" dur="2s" repeatCount="indefinite" />
+                  <circle
+                    r={r + 6}
+                    fill="none"
+                    stroke="#ef4444"
+                    strokeWidth={2}
+                    strokeOpacity={0.3}
+                  >
+                    <animate
+                      attributeName="r"
+                      values={`${r + 4};${r + 8};${r + 4}`}
+                      dur="2s"
+                      repeatCount="indefinite"
+                    />
+                    <animate
+                      attributeName="stroke-opacity"
+                      values="0.4;0.1;0.4"
+                      dur="2s"
+                      repeatCount="indefinite"
+                    />
                   </circle>
                 )}
                 <circle
@@ -735,13 +849,30 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
                   strokeWidth={isHovered || isSelected ? 2.5 : 1}
                 />
                 {/* Node label */}
-                <text y={-r - 6} textAnchor="middle" fill="#ddd" fontSize="0.65rem" fontFamily="monospace" style={{ pointerEvents: "none" }}>
-                  {node.label.length > 20 ? node.label.slice(0, 18) + "…" : node.label}
+                <text
+                  y={-r - 6}
+                  textAnchor="middle"
+                  fill="#ddd"
+                  fontSize="0.65rem"
+                  fontFamily="monospace"
+                  style={{ pointerEvents: "none" }}
+                >
+                  {node.label.length > 20
+                    ? node.label.slice(0, 18) + "…"
+                    : node.label}
                 </text>
                 {/* SIGMA badge */}
                 {node.hasSigma && (
-                  <text y={r + 14} textAnchor="middle" fill="#ef4444" fontSize="0.6rem" fontWeight="bold" style={{ pointerEvents: "none" }}>
-                    ⚠ {node.sigmaRules.length} rule{node.sigmaRules.length !== 1 ? "s" : ""}
+                  <text
+                    y={r + 14}
+                    textAnchor="middle"
+                    fill="#ef4444"
+                    fontSize="0.6rem"
+                    fontWeight="bold"
+                    style={{ pointerEvents: "none" }}
+                  >
+                    ⚠ {node.sigmaRules.length} rule
+                    {node.sigmaRules.length !== 1 ? "s" : ""}
                   </text>
                 )}
               </g>
@@ -755,20 +886,42 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
         <div className="graph-tooltip">
           <strong>{hoveredNode.label}</strong>
           <div style={{ fontSize: "0.75rem", color: "#aaa", marginTop: 4 }}>
-            Event ID: {hoveredNode.entry.eventId || "?"}<br />
+            Event ID: {hoveredNode.entry.eventId || "?"}
+            <br />
             {hoveredNode.entry.timestamp instanceof Date
               ? hoveredNode.entry.timestamp.toLocaleString()
               : ""}
           </div>
           {hoveredNode.hasSigma && (
-            <div style={{ marginTop: 6, borderTop: "1px solid #333", paddingTop: 6 }}>
-              <div style={{ color: "#ef4444", fontWeight: "bold", fontSize: "0.75rem" }}>⚠ SIGMA Detections:</div>
+            <div
+              style={{
+                marginTop: 6,
+                borderTop: "1px solid #333",
+                paddingTop: 6,
+              }}
+            >
+              <div
+                style={{
+                  color: "#ef4444",
+                  fontWeight: "bold",
+                  fontSize: "0.75rem",
+                }}
+              >
+                ⚠ SIGMA Detections:
+              </div>
               {hoveredNode.sigmaRules.map((r, i) => (
-                <div key={i} style={{ fontSize: "0.7rem", color: "#fca5a5", marginTop: 2 }}>• {r}</div>
+                <div
+                  key={i}
+                  style={{ fontSize: "0.7rem", color: "#fca5a5", marginTop: 2 }}
+                >
+                  • {r}
+                </div>
               ))}
             </div>
           )}
-          <div style={{ fontSize: "0.6rem", color: "#666", marginTop: 4 }}>Click for details</div>
+          <div style={{ fontSize: "0.6rem", color: "#666", marginTop: 4 }}>
+            Click for details
+          </div>
         </div>
       )}
 
@@ -777,21 +930,38 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
         <div className="graph-detail-panel">
           <div className="graph-detail-header">
             <strong>{selectedNode.label}</strong>
-            <button className="graph-detail-close" onClick={() => setSelectedNode(null)}>✕</button>
+            <button
+              className="graph-detail-close"
+              onClick={() => setSelectedNode(null)}
+            >
+              ✕
+            </button>
           </div>
           <div className="graph-detail-meta">
             <span>Event ID: {selectedNode.entry.eventId || "?"}</span>
             <span>
               {selectedNode.entry.timestamp instanceof Date
-                ? selectedNode.entry.timestamp.toLocaleString(undefined, { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+                ? selectedNode.entry.timestamp.toLocaleString(undefined, {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                    hour12: false,
+                  })
                 : ""}
             </span>
-            {selectedNode.entry.computer && <span>Host: {selectedNode.entry.computer}</span>}
+            {selectedNode.entry.computer && (
+              <span>Host: {selectedNode.entry.computer}</span>
+            )}
           </div>
 
           {selectedNode.sigmaDetails.length > 0 ? (
             <div className="graph-detail-sigma">
-              <div className="graph-detail-sigma-title">🔍 SIGMA Detections — What matched:</div>
+              <div className="graph-detail-sigma-title">
+                🔍 SIGMA Detections — What matched:
+              </div>
               {selectedNode.sigmaDetails.map((det, di) => (
                 <div key={di} className="graph-detail-rule">
                   <div className="graph-detail-rule-name">⚠ {det.rule}</div>
@@ -799,12 +969,23 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
                     <div className="graph-detail-fields">
                       {det.fields.map((f, fi) => (
                         <div key={fi} className="graph-detail-field-row">
-                          <span className="graph-detail-field-name">{f.field}</span>
-                          <span className="graph-detail-field-arrow">→</span>
-                          <span className="graph-detail-field-value" title={f.value}>
-                            {f.value.length > 60 ? f.value.slice(0, 58) + "…" : f.value}
+                          <span className="graph-detail-field-name">
+                            {f.field}
                           </span>
-                          {f.modifier && <span className="graph-detail-modifier">{f.modifier}</span>}
+                          <span className="graph-detail-field-arrow">→</span>
+                          <span
+                            className="graph-detail-field-value"
+                            title={f.value}
+                          >
+                            {f.value.length > 60
+                              ? f.value.slice(0, 58) + "…"
+                              : f.value}
+                          </span>
+                          {f.modifier && (
+                            <span className="graph-detail-modifier">
+                              {f.modifier}
+                            </span>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -813,7 +994,9 @@ function CorrelationGraph({ chains, onPivotToEvent }: CorrelationGraphProps) {
               ))}
             </div>
           ) : (
-            <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 8 }}>No SIGMA detections for this event.</div>
+            <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 8 }}>
+              No SIGMA detections for this event.
+            </div>
           )}
 
           <button

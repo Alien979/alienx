@@ -52,6 +52,7 @@ export default function InvestigationTimeline({
     // 1. SIGMA detections
     for (const matches of sigmaMatches.values()) {
       for (const m of matches) {
+        if (!m.event) continue;
         result.push({
           timestamp: m.timestamp,
           kind: "sigma",
@@ -139,7 +140,11 @@ export default function InvestigationTimeline({
       }
     }
 
-    result.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    result.sort((a, b) => {
+      const tA = a.timestamp instanceof Date ? a.timestamp.getTime() : 0;
+      const tB = b.timestamp instanceof Date ? b.timestamp.getTime() : 0;
+      return (isNaN(tA) ? 0 : tA) - (isNaN(tB) ? 0 : tB);
+    });
     return result;
   }, [entries, sigmaMatches]);
 

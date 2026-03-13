@@ -17,22 +17,35 @@ interface YaraDetectionsProps {
   events: LogEntry[];
   platform: LogPlatform;
   onOpenRawLogs?: () => void;
+  cachedMatches?: YaraRuleMatch[];
+  cachedStats?: YaraScanStats;
+  onMatchesUpdate?: (
+    matches: YaraRuleMatch[],
+    stats: YaraScanStats | null,
+  ) => void;
 }
 
 export default function YaraDetections({
   events,
   platform,
   onOpenRawLogs,
+  cachedMatches,
+  cachedStats,
+  onMatchesUpdate,
 }: YaraDetectionsProps) {
-  const [matches, setMatches] = useState<YaraRuleMatch[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [scanStats, setScanStats] = useState<YaraScanStats | null>(null);
+  const [matches, setMatches] = useState<YaraRuleMatch[]>(cachedMatches ?? []);
+  const [isLoading, setIsLoading] = useState(cachedMatches === undefined);
+  const [scanStats, setScanStats] = useState<YaraScanStats | null>(
+    cachedStats ?? null,
+  );
   const [progress, setProgress] = useState({
     processed: 0,
     total: 0,
     matchesFound: 0,
   });
   const lastProgressUpdateRef = useRef(0);
+  const onMatchesUpdateRef = useRef(onMatchesUpdate);
+  onMatchesUpdateRef.current = onMatchesUpdate;
 
   // Card expand/collapse
   const [expandedRule, setExpandedRule] = useState<string | null>(null);
@@ -98,12 +111,21 @@ export default function YaraDetections({
   }, []);
 
   useEffect(() => {
+    // Skip scan if results are already cached
+    if (cachedMatches !== undefined) {
+      setMatches(cachedMatches);
+      setScanStats(cachedStats ?? null);
+      setIsLoading(false);
+      return;
+    }
+
     let cancelled = false;
 
     if (events.length === 0) {
       setMatches([]);
       setScanStats(null);
       setIsLoading(false);
+      onMatchesUpdateRef.current?.([], null);
       return;
     }
 
@@ -125,6 +147,7 @@ export default function YaraDetections({
         setMatches(result.matches);
         setScanStats(result.stats);
         setIsLoading(false);
+        onMatchesUpdateRef.current?.(result.matches, result.stats);
       })
       .catch((error) => {
         console.error("[YARA] Detection failed:", error);
@@ -132,12 +155,13 @@ export default function YaraDetections({
         setMatches([]);
         setScanStats(null);
         setIsLoading(false);
+        onMatchesUpdateRef.current?.([], null);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [events, platform]);
+  }, [events, platform, cachedMatches, cachedStats]);
 
   // Sort by total matched events descending
   const sortedMatches = useMemo(() => {

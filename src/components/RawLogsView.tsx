@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef } from "react";
+import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { ParsedData, LogEntry } from "../types";
 import { SigmaRuleMatch } from "../lib/sigma/types";
 import FileFilter from "./FileFilter";
@@ -196,15 +196,13 @@ export default function RawLogsView({
   const visibleEntries = filteredEntries.slice(startIndex, endIndex);
   const offsetY = startIndex * ROW_HEIGHT;
 
-  // Reset scroll when filters change
-  const prevFilterKey = useRef("");
+  // Reset scroll when filters change (in effect to avoid side-effect during render)
   const filterKey = `${selectedFile || ""}|${filters.map((f) => `${f.field}:${f.value}`).join(",")}`;
-  if (filterKey !== prevFilterKey.current) {
-    prevFilterKey.current = filterKey;
+  useEffect(() => {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
-  }
+  }, [filterKey]);
 
   // Add a filter
   const addFilter = (field: string) => {

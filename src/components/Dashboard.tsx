@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { ParsedData } from "../types";
 import SigmaDetections from "./SigmaDetections";
 import YaraDetections from "./YaraDetections";
 import { SigmaEngine } from "../lib/sigma";
 import { SigmaRuleMatch } from "../lib/sigma/types";
+import type { YaraRuleMatch, YaraScanStats } from "../lib/yara";
 import "./Dashboard.css";
 
 interface DashboardProps {
@@ -14,6 +15,12 @@ interface DashboardProps {
   sigmaEngine?: SigmaEngine;
   cachedMatches?: Map<string, SigmaRuleMatch[]>;
   onMatchesUpdate?: (matches: Map<string, SigmaRuleMatch[]>) => void;
+  cachedYaraMatches?: YaraRuleMatch[];
+  cachedYaraStats?: YaraScanStats;
+  onYaraMatchesUpdate?: (
+    matches: YaraRuleMatch[],
+    stats: YaraScanStats | null,
+  ) => void;
 }
 
 export default function Dashboard({
@@ -24,11 +31,19 @@ export default function Dashboard({
   sigmaEngine,
   cachedMatches,
   onMatchesUpdate,
+  cachedYaraMatches,
+  cachedYaraStats,
+  onYaraMatchesUpdate,
 }: DashboardProps) {
   // Track if analysis is complete - disable back button until done
   const [isAnalysisComplete, setIsAnalysisComplete] = useState(
     cachedMatches !== undefined,
   );
+
+  // Keep isAnalysisComplete in sync if parent provides cached results after mount
+  useEffect(() => {
+    if (cachedMatches !== undefined) setIsAnalysisComplete(true);
+  }, [cachedMatches]);
 
   // Handle analysis completion
   const handleAnalysisComplete = (matches: Map<string, SigmaRuleMatch[]>) => {
@@ -247,6 +262,9 @@ export default function Dashboard({
               events={data.entries}
               platform={data.platform}
               onOpenRawLogs={onOpenRawLogs}
+              cachedMatches={cachedYaraMatches}
+              cachedStats={cachedYaraStats}
+              onMatchesUpdate={onYaraMatchesUpdate}
             />
           </div>
         </>

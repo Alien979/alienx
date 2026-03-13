@@ -193,11 +193,14 @@ export default function SigmaDetections({
 
     const rules = sigmaEngine.getAllRules();
 
+    let cancelled = false;
+
     // Start optimized processing on main thread with yields
     processEventsOptimized(
       events,
       rules,
       (processed, total, stats) => {
+        if (cancelled) return;
         const now = performance.now();
         // Throttle UI updates to reduce render overhead on large datasets.
         if (now - lastProgressUpdateRef.current < 120 && processed < total) {
@@ -214,6 +217,7 @@ export default function SigmaDetections({
       1000, // Larger chunk size for better throughput
     )
       .then(({ matches: result, stats }) => {
+        if (cancelled) return;
         setMatches(result);
         setOptimizationStats(stats);
         setIsLoading(false);
@@ -223,6 +227,7 @@ export default function SigmaDetections({
         }
       })
       .catch((err) => {
+        if (cancelled) return;
         console.error("SIGMA processing failed:", err);
         setIsLoading(false);
         setMatches(new Map());
@@ -232,8 +237,10 @@ export default function SigmaDetections({
         }
       });
 
-    // No cleanup needed - we want analysis to complete
-  }, [events, sigmaEngine]);
+    return () => {
+      cancelled = true;
+    };
+  }, [events, sigmaEngine, cachedMatches]);
 
   // Calculate statistics from matches
   const stats = useMemo(() => {
