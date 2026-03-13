@@ -130,6 +130,7 @@ export default function SigmaDetections({
   const [matchesVisiblePerRule, setMatchesVisiblePerRule] = useState<
     Record<string, number>
   >({});
+  const lastProgressUpdateRef = useRef(0);
 
   // Auto-clear copied tooltip after 2 seconds
   useEffect(() => {
@@ -198,6 +199,13 @@ export default function SigmaDetections({
       events,
       rules,
       (processed, total, stats) => {
+        const now = performance.now();
+        // Throttle UI updates to reduce render overhead on large datasets.
+        if (now - lastProgressUpdateRef.current < 120 && processed < total) {
+          return;
+        }
+        lastProgressUpdateRef.current = now;
+
         setProgress({
           processed,
           total,
@@ -205,19 +213,25 @@ export default function SigmaDetections({
         });
       },
       1000, // Larger chunk size for better throughput
-    ).then(({ matches: result, stats }) => {
-      setMatches(result);
-      setOptimizationStats(stats);
-      setIsLoading(false);
-      // Notify parent that analysis is complete
-      if (onMatchesUpdateRef.current) {
-        onMatchesUpdateRef.current(result);
-      }
-    }).catch((err) => {
-      console.error('SIGMA processing failed:', err);
-      setIsLoading(false);
-      setMatches(new Map());
-    });
+    )
+      .then(({ matches: result, stats }) => {
+        setMatches(result);
+        setOptimizationStats(stats);
+        setIsLoading(false);
+        // Notify parent that analysis is complete
+        if (onMatchesUpdateRef.current) {
+          onMatchesUpdateRef.current(result);
+        }
+      })
+      .catch((err) => {
+        console.error("SIGMA processing failed:", err);
+        setIsLoading(false);
+        setMatches(new Map());
+        // Always notify parent so the back button unlocks even on error
+        if (onMatchesUpdateRef.current) {
+          onMatchesUpdateRef.current(new Map());
+        }
+      });
 
     // No cleanup needed - we want analysis to complete
   }, [events, sigmaEngine]);
@@ -823,10 +837,12 @@ export default function SigmaDetections({
                                               .toLowerCase()
                                               .startsWith("filter");
                                             // Check if this selection overall matched
-                                            const selMatch = match.selectionMatches?.find(
-                                              (sm) => sm.selection === sel
-                                            );
-                                            const selMatched = selMatch?.matched ?? false;
+                                            const selMatch =
+                                              match.selectionMatches?.find(
+                                                (sm) => sm.selection === sel,
+                                              );
+                                            const selMatched =
+                                              selMatch?.matched ?? false;
 
                                             return (
                                               <div
@@ -836,8 +852,12 @@ export default function SigmaDetections({
                                                 <div className="why-matched-sel-label">
                                                   <span className="why-sel-status">
                                                     {isFilter
-                                                      ? (selMatched ? "❌" : "✅")
-                                                      : (selMatched ? "✅" : "❌")}
+                                                      ? selMatched
+                                                        ? "❌"
+                                                        : "✅"
+                                                      : selMatched
+                                                        ? "✅"
+                                                        : "❌"}
                                                   </span>
                                                   {isFilter ? (
                                                     <span className="why-sel-badge why-sel-filter">
@@ -850,16 +870,18 @@ export default function SigmaDetections({
                                                   )}
                                                   <span className="why-sel-summary">
                                                     {isFilter
-                                                      ? (selMatched
-                                                          ? "exclusion matched — would normally suppress, but condition logic allowed detection"
-                                                          : "exclusion did not match — detection not suppressed")
-                                                      : (selMatched
-                                                          ? `${fields.filter(f => f.matchedPattern !== undefined).length} of ${fields.length} field(s) triggered`
-                                                          : "selection did not match")}
+                                                      ? selMatched
+                                                        ? "exclusion matched — would normally suppress, but condition logic allowed detection"
+                                                        : "exclusion did not match — detection not suppressed"
+                                                      : selMatched
+                                                        ? `${fields.filter((f) => f.matchedPattern !== undefined).length} of ${fields.length} field(s) triggered`
+                                                        : "selection did not match"}
                                                   </span>
                                                 </div>
                                                 {fields.map((fm, fi) => {
-                                                  const hasPattern = fm.matchedPattern !== undefined;
+                                                  const hasPattern =
+                                                    fm.matchedPattern !==
+                                                    undefined;
                                                   const modLabel =
                                                     fm.modifier || "equals";
                                                   const patternStr =
@@ -944,80 +966,87 @@ export default function SigmaDetections({
                                     {/* Collapsed raw field details */}
                                     <details className="raw-fields-details">
                                       <summary className="raw-fields-summary">
-                                        Raw Field Details ({allFieldMatches.length} fields)
+                                        Raw Field Details (
+                                        {allFieldMatches.length} fields)
                                         <span className="raw-fields-hint">
-                                          Hover selection names for YAML definition
+                                          Hover selection names for YAML
+                                          definition
                                         </span>
                                       </summary>
-                                    {allFieldMatches.map((fm, fmIdx) => (
-                                      <div key={fmIdx} className="field-match">
-                                        <div className="field-match-header">
-                                          <span className="field-name">
-                                            {fm.field}
-                                          </span>
-                                          {fm.modifier &&
-                                            fm.modifier !== "equals" && (
-                                              <span className="field-modifier">
-                                                {fm.modifier}
+                                      {allFieldMatches.map((fm, fmIdx) => (
+                                        <div
+                                          key={fmIdx}
+                                          className="field-match"
+                                        >
+                                          <div className="field-match-header">
+                                            <span className="field-name">
+                                              {fm.field}
+                                            </span>
+                                            {fm.modifier &&
+                                              fm.modifier !== "equals" && (
+                                                <span className="field-modifier">
+                                                  {fm.modifier}
+                                                </span>
+                                              )}
+                                            {fm.selection
+                                              .toLowerCase()
+                                              .startsWith("filter") && (
+                                              <span className="field-not-label">
+                                                NOT
                                               </span>
                                             )}
-                                          {fm.selection
-                                            .toLowerCase()
-                                            .startsWith("filter") && (
-                                            <span className="field-not-label">
-                                              NOT
+                                            <span className="field-selection-wrapper">
+                                              <span className="field-selection">
+                                                {fm.selection}
+                                              </span>
+                                              {fm.selectionDef && (
+                                                <span className="field-selection-tooltip">
+                                                  <pre>
+                                                    {formatSelectionForTooltip(
+                                                      fm.selectionDef,
+                                                      fm.selection,
+                                                      fm.field,
+                                                      fm.matchedPattern,
+                                                    )}
+                                                  </pre>
+                                                </span>
+                                              )}
                                             </span>
-                                          )}
-                                          <span className="field-selection-wrapper">
-                                            <span className="field-selection">
-                                              {fm.selection}
-                                            </span>
-                                            {fm.selectionDef && (
-                                              <span className="field-selection-tooltip">
-                                                <pre>
-                                                  {formatSelectionForTooltip(
-                                                    fm.selectionDef,
-                                                    fm.selection,
-                                                    fm.field,
-                                                    fm.matchedPattern,
-                                                  )}
-                                                </pre>
+                                          </div>
+                                          <div className="field-value">
+                                            {fm.value === undefined ||
+                                            fm.value === null ? (
+                                              <span
+                                                style={{
+                                                  fontStyle: "italic",
+                                                  color: "var(--text-dim)",
+                                                }}
+                                              >
+                                                {fm.value === null
+                                                  ? "(null)"
+                                                  : "(not found in event)"}
+                                              </span>
+                                            ) : fm.value === "" ? (
+                                              <span
+                                                style={{
+                                                  fontStyle: "italic",
+                                                  color: "var(--text-dim)",
+                                                }}
+                                              >
+                                                (empty)
+                                              </span>
+                                            ) : (
+                                              <span
+                                                style={{
+                                                  wordBreak: "break-all",
+                                                }}
+                                              >
+                                                {String(fm.value)}
                                               </span>
                                             )}
-                                          </span>
+                                          </div>
                                         </div>
-                                        <div className="field-value">
-                                          {fm.value === undefined ||
-                                          fm.value === null ? (
-                                            <span
-                                              style={{
-                                                fontStyle: "italic",
-                                                color: "var(--text-dim)",
-                                              }}
-                                            >
-                                              {fm.value === null
-                                                ? "(null)"
-                                                : "(not found in event)"}
-                                            </span>
-                                          ) : fm.value === "" ? (
-                                            <span
-                                              style={{
-                                                fontStyle: "italic",
-                                                color: "var(--text-dim)",
-                                              }}
-                                            >
-                                              (empty)
-                                            </span>
-                                          ) : (
-                                            <span
-                                              style={{ wordBreak: "break-all" }}
-                                            >
-                                              {String(fm.value)}
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    ))}
+                                      ))}
                                     </details>
                                   </div>
                                 )}

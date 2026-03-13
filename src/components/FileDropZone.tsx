@@ -13,6 +13,10 @@ import {
   MultiFileProcessingResults,
 } from "../types/fileProcessing";
 import { isZipFile, extractFilesFromZip } from "../lib/zipUtils";
+import {
+  collectFilesFromDataTransfer,
+  CollectedFile,
+} from "../lib/fileTreeUtils";
 import "./FileDropZone.css";
 
 interface FileDropZoneProps {
@@ -87,6 +91,7 @@ export default function FileDropZone({
           const parsedData: ParsedData = {
             entries,
             format: "evtx",
+            platform: "windows",
             totalLines: entries.length,
             parsedLines: entries.length,
             sourceFiles: [file.name],
@@ -297,7 +302,7 @@ export default function FileDropZone({
   };
 
   const handleFiles = useCallback(
-    async (files: FileList) => {
+    async (files: CollectedFile[]) => {
       if (files.length === 0) return;
 
       setIsProcessing(true);
@@ -308,7 +313,7 @@ export default function FileDropZone({
       const zipExtractionErrors: FileProcessingResult[] = [];
 
       for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+        const file = files[i].file;
         const isZip = await isZipFile(file);
 
         if (isZip) {
@@ -433,6 +438,7 @@ export default function FileDropZone({
               const parsedData: ParsedData = {
                 entries,
                 format: "evtx",
+                platform: "windows",
                 totalLines: entries.length,
                 parsedLines: entries.length,
                 sourceFiles: [file.name],
@@ -581,6 +587,7 @@ export default function FileDropZone({
         const parsedData: ParsedData = {
           entries,
           format: "evtx",
+          platform: "windows",
           totalLines: entries.length,
           parsedLines: entries.length,
           sourceFiles: [filename],
@@ -676,6 +683,7 @@ export default function FileDropZone({
       const parsedData: ParsedData = {
         entries: allEntries,
         format: "evtx",
+        platform: "windows",
         totalLines: allEntries.length,
         parsedLines: allEntries.length,
         sourceFiles,
@@ -704,11 +712,11 @@ export default function FileDropZone({
   );
 
   const handleDrop = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
+    async (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
       setIsDragging(false);
 
-      const files = e.dataTransfer.files;
+      const files = await collectFilesFromDataTransfer(e.dataTransfer);
       if (files.length > 0) {
         handleFiles(files);
       }
@@ -730,7 +738,11 @@ export default function FileDropZone({
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
       if (files && files.length > 0) {
-        handleFiles(files);
+        const selected: CollectedFile[] = Array.from(files).map((file) => ({
+          file,
+          relativePath: file.webkitRelativePath || file.name,
+        }));
+        handleFiles(selected);
       }
     },
     [handleFiles],
@@ -758,13 +770,13 @@ export default function FileDropZone({
           </>
         ) : (
           <>
-            <h2>Drop your EVTX/XML/ZIP file(s) here</h2>
+            <h2>Drop your EVTX/XML/ZIP files or folders here</h2>
             <p>
               Windows Event Log files (.evtx) - binary or XML export, or ZIP
               archives containing logs
             </p>
             <p className="info-note">
-              💡 You can select multiple files at once
+              💡 You can select multiple files or a full folder at once
             </p>
             <p className="info-note">💡 File size limit: 1GB per file</p>
             <p className="privacy-note">
@@ -772,17 +784,31 @@ export default function FileDropZone({
               computer (except when using AI analysis)
             </p>
 
-            <label className="file-input-label">
-              <input
-                type="file"
-                accept=".evtx,.xml,.zip"
-                onChange={handleFileInput}
-                style={{ display: "none" }}
-                disabled={rulesLoading || isProcessing}
-                multiple
-              />
-              <span className="button">Or click to browse</span>
-            </label>
+            <div className="secondary-buttons">
+              <label className="file-input-label">
+                <input
+                  type="file"
+                  accept=".evtx,.xml,.zip"
+                  onChange={handleFileInput}
+                  style={{ display: "none" }}
+                  disabled={rulesLoading || isProcessing}
+                  multiple
+                />
+                <span className="button">Browse Files</span>
+              </label>
+
+              <label className="file-input-label">
+                <input
+                  type="file"
+                  multiple
+                  onChange={handleFileInput}
+                  style={{ display: "none" }}
+                  disabled={rulesLoading || isProcessing}
+                  {...({ webkitdirectory: "", directory: "" } as any)}
+                />
+                <span className="button">Upload Folder</span>
+              </label>
+            </div>
 
             <div className="secondary-buttons">
               <button

@@ -7,7 +7,9 @@ import {
   useCallback,
 } from "react";
 import FileDropZone from "./components/FileDropZone";
+import LinuxDropZone from "./components/LinuxDropZone";
 import AnalysisSelector, { AnalysisMode } from "./components/AnalysisSelector";
+import PlatformChooser from "./components/PlatformChooser";
 import Dashboard from "./components/Dashboard";
 const LazySigmaPlatformSelector = lazy(
   () => import("./components/SigmaPlatformSelector"),
@@ -24,6 +26,7 @@ import BookmarkPanel from "./components/BookmarkPanel";
 import { EventDetailsModal } from "./components/EventDetailsModal";
 import { getBookmarks } from "./lib/eventBookmarks";
 import { ParsedData } from "./types";
+import { LogPlatform } from "./types";
 import type { LogEntry } from "./types";
 import { clearVTCache } from "./lib/vtCache";
 import { createSigmaEngine, SigmaEngine } from "./lib/sigma";
@@ -46,6 +49,9 @@ const LazyEventCorrelation = lazy(
 type AppView = "upload" | "select" | "sigma-platform" | "analysis";
 
 function App() {
+  const [analysisPlatform, setAnalysisPlatform] = useState<LogPlatform | null>(
+    null,
+  );
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [filename, setFilename] = useState<string>("");
   const [rulesLoading, setRulesLoading] = useState(false);
@@ -191,12 +197,14 @@ function App() {
 
   const handleFileLoaded = (data: ParsedData, name: string) => {
     clearVTCache(); // Clear stale VT results from previous file
+    setAnalysisPlatform(data.platform);
     setParsedData(data);
     setFilename(name);
     setCurrentView("select");
   };
 
   const handleReset = () => {
+    setAnalysisPlatform(null);
     setParsedData(null);
     setFilename("");
     setAnalysisMode(null);
@@ -208,6 +216,15 @@ function App() {
   };
 
   const handleAnalysisSelect = (mode: AnalysisMode) => {
+    if (
+      parsedData?.platform === "linux" &&
+      (mode === "process-analysis" ||
+        mode === "timeline" ||
+        mode === "event-correlation")
+    ) {
+      return;
+    }
+
     if (mode === "sigma") {
       // If we already have cached matches, go directly to analysis
       // Otherwise show platform selector
@@ -290,6 +307,7 @@ function App() {
     matches: Map<string, SigmaRuleMatch[]>,
     _conversation?: { provider: string; model: string; messages: any[] },
   ) => {
+    setAnalysisPlatform(data.platform);
     setParsedData(data);
     setFilename(name);
     setSelectedPlatform(platform as SigmaPlatform | null);
@@ -302,14 +320,30 @@ function App() {
   // Render based on current view
   let content: JSX.Element;
 
-  if (currentView === "upload" || !parsedData) {
+  if (!analysisPlatform) {
+    content = (
+      <ErrorBoundary>
+        <PlatformChooser
+          onSelect={(platform) => setAnalysisPlatform(platform)}
+        />
+      </ErrorBoundary>
+    );
+  } else if (currentView === "upload" || !parsedData) {
     content = (
       <FileOperationErrorBoundary>
-        <FileDropZone
-          onFileLoaded={handleFileLoaded}
-          rulesLoading={rulesLoading}
-          onOpenSessions={() => setShowSessionManager(true)}
-        />
+        {analysisPlatform === "windows" ? (
+          <FileDropZone
+            onFileLoaded={handleFileLoaded}
+            rulesLoading={rulesLoading}
+            onOpenSessions={() => setShowSessionManager(true)}
+          />
+        ) : (
+          <LinuxDropZone
+            onFileLoaded={handleFileLoaded}
+            rulesLoading={rulesLoading}
+            onOpenSessions={() => setShowSessionManager(true)}
+          />
+        )}
       </FileOperationErrorBoundary>
     );
   } else if (currentView === "select") {
@@ -322,7 +356,7 @@ function App() {
           onReset={handleReset}
           onOpenSessions={() => setShowSessionManager(true)}
           sigmaMatches={sigmaMatches}
-          platform={selectedPlatform}
+          platform={selectedPlatform || parsedData.platform}
         />
       </ErrorBoundary>
     );
@@ -337,6 +371,7 @@ function App() {
             onBack={handleBackFromPlatformSelector}
             sigmaEngine={sigmaEngine}
             onCustomRulesLoaded={handleCustomRulesLoaded}
+            defaultPlatform={parsedData.platform}
           />
         </Suspense>
       </ErrorBoundary>
@@ -473,6 +508,7 @@ function App() {
           filename={filename}
           onSelect={handleAnalysisSelect}
           onReset={handleReset}
+          platform={selectedPlatform || parsedData.platform}
         />
       </ErrorBoundary>
     );
@@ -482,7 +518,7 @@ function App() {
     ? {
         currentData: parsedData,
         currentFilename: filename,
-        currentPlatform: selectedPlatform,
+        currentPlatform: selectedPlatform || parsedData.platform,
         currentMatches: sigmaMatches,
         currentConversation: undefined, // Conversation managed by LLMAnalysis
       }

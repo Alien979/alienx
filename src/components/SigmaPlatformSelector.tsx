@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import {
   getAvailablePlatformsWithCounts,
+  getAvailableCategories,
   SigmaPlatform,
   PlatformInfo,
 } from "../lib/sigma/utils/autoLoadRules";
@@ -12,6 +13,7 @@ interface SigmaPlatformSelectorProps {
   onBack: () => void;
   sigmaEngine?: any;
   onCustomRulesLoaded?: (count: number) => void;
+  defaultPlatform?: SigmaPlatform | null;
 }
 
 export default function SigmaPlatformSelector({
@@ -19,6 +21,7 @@ export default function SigmaPlatformSelector({
   onBack,
   sigmaEngine,
   onCustomRulesLoaded,
+  defaultPlatform = null,
 }: SigmaPlatformSelectorProps) {
   const [hoveredPlatform, setHoveredPlatform] = useState<string | null>(null);
   const [selectedPlatform, setSelectedPlatform] =
@@ -29,6 +32,30 @@ export default function SigmaPlatformSelector({
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const loadCategoriesForPlatform = useCallback(
+    async (platformId: SigmaPlatform) => {
+      setSelectedPlatform(platformId);
+      setLoadError(null);
+      try {
+        const categories = (await getAvailableCategories(platformId)).sort();
+        setAvailableCategories(categories);
+        setSelectedCategories(categories);
+        if (categories.length === 0) {
+          setLoadError(
+            `No categories available for ${platformId}. Run \"npm run bundle:sigma\" to generate rule bundles.`,
+          );
+        }
+      } catch (_error) {
+        setAvailableCategories([]);
+        setSelectedCategories([]);
+        setLoadError(
+          `Failed to load ${platformId} manifest. Ensure rules are bundled.`,
+        );
+      }
+    },
+    [],
+  );
+
   // Load platforms with dynamic rule counts and categories
   useEffect(() => {
     const loadData = async () => {
@@ -36,39 +63,18 @@ export default function SigmaPlatformSelector({
       // Load platforms
       const platformsData = await getAvailablePlatformsWithCounts();
       setPlatforms(platformsData);
-
-      // Load categories from manifest
-      try {
-        const response = await fetch("/sigma-rules/manifest.json");
-        if (response.ok) {
-          const manifest = await response.json();
-          const categories = Object.keys(manifest).sort();
-          setAvailableCategories(categories);
-          if (categories.length === 0) {
-            setLoadError(
-              'Manifest is empty. Run "npm run bundle:sigma" to generate sigma rule bundles.',
-            );
-          }
-        } else {
-          setLoadError(
-            `Failed to fetch manifest (HTTP ${response.status}). Run "npm run bundle:sigma" to generate sigma rule bundles.`,
-          );
-        }
-      } catch (error) {
-        console.warn("Failed to load categories:", error);
-        setLoadError(
-          "Failed to load sigma rule manifest. Ensure the dev server is running and rules are bundled.",
-        );
-      }
     };
     loadData();
   }, []);
 
-  const handlePlatformClick = (platformId: SigmaPlatform) => {
-    setSelectedPlatform(platformId);
-    // Select all categories by default
-    setSelectedCategories(availableCategories);
+  const handlePlatformClick = async (platformId: SigmaPlatform) => {
+    await loadCategoriesForPlatform(platformId);
   };
+
+  useEffect(() => {
+    if (!defaultPlatform || selectedPlatform) return;
+    void loadCategoriesForPlatform(defaultPlatform);
+  }, [defaultPlatform, selectedPlatform, loadCategoriesForPlatform]);
 
   const toggleCategory = (cat: string) => {
     setSelectedCategories((prev) =>
@@ -104,7 +110,9 @@ export default function SigmaPlatformSelector({
             <h1>SIGMA Detection</h1>
             <span className="logo-icon">🛡️</span>
           </div>
-          <p className="tagline">Windows Event Log (EVTX) Detection Rules</p>
+          <p className="tagline">
+            Cross-platform detection rules for Windows and Linux
+          </p>
         </div>
         <div
           style={{

@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { MultiFileProcessingResults, ErrorType } from '../types/fileProcessing';
-import { ParsedData } from '../types';
-import './FileProcessingResultsModal.css';
+import { useState } from "react";
+import { MultiFileProcessingResults, ErrorType } from "../types/fileProcessing";
+import { ParsedData } from "../types";
+import "./FileProcessingResultsModal.css";
 
 interface FileProcessingResultsModalProps {
   results: MultiFileProcessingResults;
@@ -28,12 +28,15 @@ export function FileProcessingResultsModal({
 
   const handleProceed = () => {
     // Merge all successful file data
-    const allEntries = results.successfulFiles.flatMap(f => f.parsedData?.entries || []);
-    const allFilenames = results.successfulFiles.map(f => f.filename);
+    const allEntries = results.successfulFiles.flatMap(
+      (f) => f.parsedData?.entries || [],
+    );
+    const allFilenames = results.successfulFiles.map((f) => f.filename);
 
     const mergedData: ParsedData = {
       entries: allEntries,
-      format: 'evtx',
+      format: "evtx",
+      platform: "windows",
       totalLines: allEntries.length,
       parsedLines: allEntries.length,
       sourceFiles: allFilenames,
@@ -42,26 +45,32 @@ export function FileProcessingResultsModal({
     onProceed(mergedData);
   };
 
-  const allFilesSucceeded = results.failedFiles.length === 0 && results.partialFiles.length === 0;
+  const allFilesSucceeded =
+    results.failedFiles.length === 0 && results.partialFiles.length === 0;
   const someFilesSucceeded = results.successfulFiles.length > 0;
   const allFilesFailed = results.successfulFiles.length === 0;
 
   return (
     <div className="file-results-modal-overlay" onClick={onCancel}>
-      <div className="file-results-modal" onClick={e => e.stopPropagation()}>
+      <div className="file-results-modal" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="file-results-header">
           <div className="file-results-title-section">
             <h2 className="file-results-title">
-              {allFilesSucceeded && '✓ All Files Processed Successfully'}
-              {someFilesSucceeded && !allFilesSucceeded && '⚠ Partial Success'}
-              {allFilesFailed && '✗ Processing Failed'}
+              {allFilesSucceeded && "✓ All Files Processed Successfully"}
+              {someFilesSucceeded && !allFilesSucceeded && "⚠ Partial Success"}
+              {allFilesFailed && "✗ Processing Failed"}
             </h2>
             <span className="file-results-subtitle">
-              {results.successfulFiles.length} of {results.totalFiles} files processed successfully
+              {results.successfulFiles.length} of {results.totalFiles} files
+              processed successfully
             </span>
           </div>
-          <button className="file-results-close" onClick={onCancel} aria-label="Close">
+          <button
+            className="file-results-close"
+            onClick={onCancel}
+            aria-label="Close"
+          >
             ✕
           </button>
         </div>
@@ -77,7 +86,9 @@ export function FileProcessingResultsModal({
             <div className="stat-label">Failed</div>
           </div>
           <div className="summary-stat records">
-            <div className="stat-value">{results.totalRecordsParsed.toLocaleString()}</div>
+            <div className="stat-value">
+              {results.totalRecordsParsed.toLocaleString()}
+            </div>
             <div className="stat-label">Total Records</div>
           </div>
         </div>
@@ -96,16 +107,20 @@ export function FileProcessingResultsModal({
             </thead>
             <tbody>
               {/* Successful files */}
-              {results.successfulFiles.map(file => (
+              {results.successfulFiles.map((file) => (
                 <tr key={file.filename} className="file-row success">
                   <td className="col-status">
-                    <span className="status-icon success" title="Success">✓</span>
+                    <span className="status-icon success" title="Success">
+                      ✓
+                    </span>
                   </td>
                   <td className="col-filename" title={file.filename}>
                     {file.filename}
                   </td>
                   <td className="col-size">{formatFileSize(file.fileSize)}</td>
-                  <td className="col-records">{file.recordCount?.toLocaleString() || 0}</td>
+                  <td className="col-records">
+                    {file.recordCount?.toLocaleString() || 0}
+                  </td>
                   <td className="col-details">
                     <span className="success-message">Parsed successfully</span>
                   </td>
@@ -113,10 +128,12 @@ export function FileProcessingResultsModal({
               ))}
 
               {/* Failed files */}
-              {results.failedFiles.map(file => (
+              {results.failedFiles.map((file) => (
                 <tr key={file.filename} className="file-row error">
                   <td className="col-status">
-                    <span className="status-icon error" title="Failed">✗</span>
+                    <span className="status-icon error" title="Failed">
+                      ✗
+                    </span>
                   </td>
                   <td className="col-filename" title={file.filename}>
                     {file.filename}
@@ -132,24 +149,38 @@ export function FileProcessingResultsModal({
                         className="expand-details-btn"
                         onClick={() => toggleErrorDetails(file.filename)}
                       >
-                        {expandedErrors.has(file.filename) ? 'Hide Details' : 'Show Details'}
+                        {expandedErrors.has(file.filename)
+                          ? "Hide Details"
+                          : "Show Details"}
                       </button>
                       {expandedErrors.has(file.filename) && (
                         <div className="expanded-error-details">
                           <div className="error-detail-row">
-                            <span className="error-detail-label">Error Type:</span>
-                            <span className="error-detail-value">{file.error!.type}</span>
+                            <span className="error-detail-label">
+                              Error Type:
+                            </span>
+                            <span className="error-detail-value">
+                              {file.error!.type}
+                            </span>
                           </div>
                           {file.error!.failurePoint && (
                             <div className="error-detail-row">
-                              <span className="error-detail-label">Failure Point:</span>
-                              <span className="error-detail-value">{file.error!.failurePoint}</span>
+                              <span className="error-detail-label">
+                                Failure Point:
+                              </span>
+                              <span className="error-detail-value">
+                                {file.error!.failurePoint}
+                              </span>
                             </div>
                           )}
                           {file.error!.technicalDetails && (
                             <div className="error-detail-row technical">
-                              <span className="error-detail-label">Technical Details:</span>
-                              <pre className="error-detail-value">{file.error!.technicalDetails}</pre>
+                              <span className="error-detail-label">
+                                Technical Details:
+                              </span>
+                              <pre className="error-detail-value">
+                                {file.error!.technicalDetails}
+                              </pre>
                             </div>
                           )}
                           {getErrorRecommendation(file.error!.type) && (
@@ -171,17 +202,26 @@ export function FileProcessingResultsModal({
         <div className="file-results-footer">
           {someFilesSucceeded ? (
             <>
-              <button className="file-results-button secondary" onClick={onCancel}>
+              <button
+                className="file-results-button secondary"
+                onClick={onCancel}
+              >
                 Cancel
               </button>
-              <button className="file-results-button primary" onClick={handleProceed}>
+              <button
+                className="file-results-button primary"
+                onClick={handleProceed}
+              >
                 Proceed with {results.successfulFiles.length} successful file
-                {results.successfulFiles.length !== 1 ? 's' : ''} ({results.totalRecordsParsed.toLocaleString()}{' '}
-                records)
+                {results.successfulFiles.length !== 1 ? "s" : ""} (
+                {results.totalRecordsParsed.toLocaleString()} records)
               </button>
             </>
           ) : (
-            <button className="file-results-button secondary" onClick={onCancel}>
+            <button
+              className="file-results-button secondary"
+              onClick={onCancel}
+            >
               Close
             </button>
           )}
@@ -189,7 +229,8 @@ export function FileProcessingResultsModal({
 
         {results.failedFiles.length > 0 && (
           <div className="file-results-help">
-            💡 Failed files can be re-uploaded after addressing the errors shown above
+            💡 Failed files can be re-uploaded after addressing the errors shown
+            above
           </div>
         )}
       </div>
@@ -207,43 +248,43 @@ function formatFileSize(bytes: number): string {
 function getErrorIcon(errorType: ErrorType): string {
   switch (errorType) {
     case ErrorType.FILE_TOO_LARGE:
-      return '📦';
+      return "📦";
     case ErrorType.INVALID_FORMAT:
-      return '📄';
+      return "📄";
     case ErrorType.CORRUPTED_FILE:
-      return '🔧';
+      return "🔧";
     case ErrorType.WASM_PARSING_ERROR:
     case ErrorType.XML_PARSING_ERROR:
-      return '⚠️';
+      return "⚠️";
     case ErrorType.NO_RECORDS_FOUND:
-      return '📭';
+      return "📭";
     case ErrorType.FILE_READ_ERROR:
     case ErrorType.WASM_INITIALIZATION_ERROR:
     case ErrorType.MEMORY_ERROR:
-      return '💻';
+      return "💻";
     default:
-      return '❓';
+      return "❓";
   }
 }
 
 function getErrorRecommendation(errorType: ErrorType): string | null {
   switch (errorType) {
     case ErrorType.FILE_TOO_LARGE:
-      return 'Try filtering events in Event Viewer before exporting, or split the file into smaller chunks.';
+      return "Try filtering events in Event Viewer before exporting, or split the file into smaller chunks.";
     case ErrorType.INVALID_FORMAT:
-      return 'Ensure the file is a valid .evtx file or XML export from Windows Event Viewer.';
+      return "Ensure the file is a valid .evtx file or XML export from Windows Event Viewer.";
     case ErrorType.CORRUPTED_FILE:
-      return 'The file may be corrupted. Try re-exporting from the source system.';
+      return "The file may be corrupted. Try re-exporting from the source system.";
     case ErrorType.XML_PARSING_ERROR:
-      return 'Use the binary .evtx file instead of XML export, or reduce the file size.';
+      return "Use the binary .evtx file instead of XML export, or reduce the file size.";
     case ErrorType.NO_RECORDS_FOUND:
-      return 'The file appears empty or all records failed to parse. Verify the file contains valid events.';
+      return "The file appears empty or all records failed to parse. Verify the file contains valid events.";
     case ErrorType.WASM_INITIALIZATION_ERROR:
-      return 'Try refreshing the page. This may be a browser compatibility issue.';
+      return "Try refreshing the page. This may be a browser compatibility issue.";
     case ErrorType.MEMORY_ERROR:
-      return 'Your browser ran out of memory. Close other tabs or use a smaller file.';
+      return "Your browser ran out of memory. Close other tabs or use a smaller file.";
     case ErrorType.FILE_READ_ERROR:
-      return 'The file could not be read. It may be locked or corrupted.';
+      return "The file could not be read. It may be locked or corrupted.";
     default:
       return null;
   }

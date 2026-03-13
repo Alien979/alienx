@@ -1,21 +1,13 @@
 /**
  * Auto-load SIGMA rules from bundled category files
  *
- * Loads pre-bundled rule files from /public/sigma-rules/
- * This eliminates the need for import.meta.glob and reduces bundle size
+ * Loads pre-bundled rule files from /public/sigma-rules/<platform>/
  */
 
 import { SigmaEngine } from "../SigmaEngine";
 
-/**
- * Supported SIGMA rule platforms
- * Only Windows is supported for EVTX file analysis
- */
-export type SigmaPlatform = "windows";
+export type SigmaPlatform = "windows" | "linux";
 
-/**
- * Platform metadata for UI display
- */
 export interface PlatformInfo {
   id: SigmaPlatform;
   name: string;
@@ -24,56 +16,45 @@ export interface PlatformInfo {
   ruleCount: number;
 }
 
-/**
- * Manifest entry for a rule category
- */
 interface CategoryManifest {
   file: string;
   ruleCount: number;
   sizeBytes: number;
 }
 
-/**
- * Rule file entry
- */
 interface RuleFile {
   path: string;
   content: string;
 }
 
-/**
- * Cached manifests to avoid repeated fetches
- */
-let cachedSigmaManifest: Record<string, CategoryManifest> | null = null;
+const cachedSigmaManifests = new Map<
+  SigmaPlatform,
+  Record<string, CategoryManifest>
+>();
 
-/**
- * Fetch and cache the SIGMA manifest
- */
-async function getSigmaManifest(): Promise<Record<string, CategoryManifest>> {
-  if (cachedSigmaManifest) {
-    return cachedSigmaManifest;
-  }
+async function getSigmaManifest(
+  platform: SigmaPlatform,
+): Promise<Record<string, CategoryManifest>> {
+  const cached = cachedSigmaManifests.get(platform);
+  if (cached) return cached;
 
   try {
-    const response = await fetch("/sigma-rules/manifest.json");
+    const response = await fetch(`/sigma-rules/${platform}/manifest.json`);
     if (!response.ok) {
-      throw new Error(`Failed to fetch manifest: ${response.statusText}`);
+      throw new Error(
+        `Failed to fetch ${platform} manifest: ${response.statusText}`,
+      );
     }
     const manifest = await response.json();
-    cachedSigmaManifest = manifest;
+    cachedSigmaManifests.set(platform, manifest);
     return manifest;
   } catch (error) {
-    console.error("[SIGMA] Failed to fetch manifest:", error);
+    console.error(`[SIGMA] Failed to fetch ${platform} manifest:`, error);
     return {};
   }
 }
 
-/**
- * Get available platforms with rule counts
- * Only returns Windows platform for EVTX compatibility
- */
 export function getAvailablePlatforms(): PlatformInfo[] {
-  // Return static info - rule counts will be dynamically loaded
   return [
     {
       id: "windows",
@@ -81,43 +62,41 @@ export function getAvailablePlatforms(): PlatformInfo[] {
       description:
         "Windows Event Logs (EVTX), Sysmon, PowerShell, Security events",
       icon: "",
-      ruleCount: 0, // Will be dynamically loaded from manifest
+      ruleCount: 0,
+    },
+    {
+      id: "linux",
+      name: "Linux - Official SIGMA",
+      description: "Linux logs (auditd, auth, syslog, journal exports)",
+      icon: "",
+      ruleCount: 0,
     },
   ];
 }
 
-/**
- * Get available platforms with dynamically loaded rule counts
- */
 export async function getAvailablePlatformsWithCounts(): Promise<
   PlatformInfo[]
 > {
   const platforms = getAvailablePlatforms();
 
-  // Load Windows SIGMA rule count from manifest
-  try {
-    const manifest = await getSigmaManifest();
-    const totalSigmaRules = Object.values(manifest).reduce(
-      (sum, cat) => sum + cat.ruleCount,
-      0,
-    );
-    const windowsPlatform = platforms.find((p) => p.id === "windows");
-    if (windowsPlatform) {
-      windowsPlatform.ruleCount = totalSigmaRules;
+  for (const platform of platforms) {
+    try {
+      const manifest = await getSigmaManifest(platform.id);
+      platform.ruleCount = Object.values(manifest).reduce(
+        (sum, cat) => sum + cat.ruleCount,
+        0,
+      );
+    } catch {
+      platform.ruleCount = 0;
     }
-  } catch (error) {
-    console.warn("Failed to load SIGMA rule count:", error);
   }
 
   return platforms;
 }
 
-/**
- * Load SIGMA rules for Windows platform from bundled category files
- */
 export async function autoLoadRules(
   engine: SigmaEngine,
-  _platform: SigmaPlatform = "windows",
+  platform: SigmaPlatform,
   onProgress?: (loaded: number, total: number) => void,
   categories?: string[],
 ): Promise<{
@@ -132,10 +111,8 @@ export async function autoLoadRules(
   };
 
   try {
-    // Load manifest to know which categories exist
-    const manifest = await getSigmaManifest();
+    const manifest = await getSigmaManifest(platform);
 
-    // Determine which categories to load
     let categoriesToLoad = Object.keys(manifest);
     if (categories && categories.length > 0) {
       categoriesToLoad = categoriesToLoad.filter((cat) =>
@@ -144,28 +121,27 @@ export async function autoLoadRules(
     }
 
     if (categoriesToLoad.length === 0) {
-      result.errors.push("No matching categories found");
+      result.errors.push(`No matching categories found for ${platform}`);
       return result;
     }
 
     const totalCategories = categoriesToLoad.length;
     let processedCategories = 0;
 
-    // Load each category bundle
     for (const category of categoriesToLoad) {
       const categoryInfo = manifest[category];
       if (!categoryInfo) continue;
 
       try {
-        // Fetch category bundle
-        const response = await fetch(`/sigma-rules/${categoryInfo.file}`);
+        const response = await fetch(
+          `/sigma-rules/${platform}/${categoryInfo.file}`,
+        );
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
         const rules: RuleFile[] = await response.json();
 
-        // Load each rule in the category
         for (const rule of rules) {
           try {
             const ruleIds = await engine.loadRules(rule.content);
@@ -205,24 +181,13 @@ export async function autoLoadRules(
   return result;
 }
 
-/**
- * Get list of available categories for Windows platform
- */
 export async function getAvailableCategories(
-  _platform: SigmaPlatform = "windows",
+  platform: SigmaPlatform,
 ): Promise<string[]> {
-  const manifest = await getSigmaManifest();
+  const manifest = await getSigmaManifest(platform);
   return Object.keys(manifest);
 }
 
-/**
- * Get list of available rule files for Windows platform
- * Note: This now returns category names since rules are bundled
- */
-export function getAvailableRuleFiles(
-  _platform: SigmaPlatform = "windows",
-): string[] {
-  // Return empty array since we're using bundled approach
-  // Individual file paths are no longer relevant
+export function getAvailableRuleFiles(_platform: SigmaPlatform): string[] {
   return [];
 }
