@@ -51,6 +51,24 @@ const SOURCES = [
     repo: "https://github.com/elastic/protections-artifacts.git",
     branch: null,
   },
+  {
+    id: "bartblaze",
+    name: "bartblaze Yara-Rules",
+    repo: "https://github.com/bartblaze/Yara-Rules.git",
+    branch: "master",
+  },
+  {
+    id: "inquest",
+    name: "InQuest Community YARA Rules",
+    repo: "https://github.com/InQuest/yara-rules.git",
+    branch: "master",
+  },
+  {
+    id: "malpedia-signator",
+    name: "Malpedia Signator Rules",
+    repo: "https://github.com/malpedia/signator-rules.git",
+    branch: "main",
+  },
 ];
 
 function run(command, cwd = projectRoot) {
